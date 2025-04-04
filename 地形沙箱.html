@@ -481,6 +481,37 @@
         .context-menu-item:hover {
             background-color: #e0e0e0;
         }
+
+        /* 調整大小的控制點樣式 */
+        .resize-handle {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            right: 0;
+            bottom: 0;
+            cursor: nwse-resize; /* 顯示調整大小的游標 */
+            background: linear-gradient(135deg, transparent 50%, rgba(0, 0, 0, 0.4) 50%);
+            z-index: 1010;
+        }
+
+        /* 確保縱剖面面板有正確的定位方式 */
+        .profile-panel {
+            position: fixed;
+            width: 80%;
+            max-width: 800px;
+            height: 250px;
+            min-width: 300px; /* 設定最小寬度 */
+            min-height: 150px; /* 設定最小高度 */
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+            z-index: 1010;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            resize: none; /* 禁用默認的 resize 控制 */
+        }
+
     </style>
 </head>
 <body>
@@ -520,6 +551,8 @@
             距離: 0m | 平均坡度: 0°
         </div>
     </div>
+    <!-- 添加調整大小的控制點 -->
+    <div class="resize-handle" id="profile-resize-handle"></div>
 </div>
 
     <div class="terrain-toolbar">
@@ -926,11 +959,16 @@
                     touch1.clientY - touch2.clientY
                 );
 
-                // 記錄原始縮放值
-                const oldScale = currentScale;
+                // 確保 pinchStartDistance 不為零，避免除零錯誤
+                if (pinchStartDistance <= 0) {
+                    pinchStartDistance = currentDistance;
+                }
+
+                // 記錄原始縮放值，確保 initialScale 有值
+                const oldScale = currentScale || 1.0;
 
                 // 計算新縮放值
-                currentScale = initialScale * (currentDistance / pinchStartDistance);
+                currentScale = (initialScale || 1.0) * (currentDistance / Math.max(0.1, pinchStartDistance));
 
                 // 限制縮放範圍
                 currentScale = Math.max(0.5, Math.min(currentScale, 3));
@@ -944,10 +982,30 @@
 
                 // 由於效能考量，設置標記為需要重繪，但在觸控結束時才重繪
                 needsRedraw = true;
+
+                // 增加調試日誌
+                console.log("觸控縮放:", {
+                    initialScale: initialScale,
+                    currentScale: currentScale,
+                    pinchStartDistance: pinchStartDistance,
+                    currentDistance: currentDistance,
+                    center: currentPinchCenter
+                });
             }
             else if (isDraggingMap && e.touches.length === 1) {
                 // 單指拖拽處理
                 const touch = e.touches[0];
+
+                // 確保 touchStartX 和 touchStartY 已初始化
+                if (typeof touchStartX === 'undefined' || typeof touchStartY === 'undefined') {
+                    touchStartX = touch.clientX;
+                    touchStartY = touch.clientY;
+                }
+
+                // 確保 initialOffset 已初始化
+                if (!initialOffset) {
+                    initialOffset = { x: mapOffset.x, y: mapOffset.y };
+                }
 
                 // 計算相對於初始觸控點的移動距離
                 const deltaX = touch.clientX - touchStartX;
@@ -959,6 +1017,77 @@
 
                 // 更新位置
                 updateMapContainerPosition();
+            }
+        }, { passive: false });
+
+        // 觸控開始事件 - 確保所有變量初始化
+        mapCanvas.addEventListener('touchstart', (e) => {
+            // 檢查是否有活動的工具
+            const hasActiveDrawingTool = isMapDrawing || isMapErasing;
+            const hasActiveMeasurementTool = isProfileMode || isPolylineMode;
+
+            // 如果有活動工具，優先處理工具事件而非拖曳
+            if (hasActiveDrawingTool || hasActiveMeasurementTool) {
+                return;
+            }
+
+            // 以下是拖曳處理代碼
+            e.preventDefault();
+
+            // 初始化 initialOffset，這是關鍵修復
+            initialOffset = {
+                x: mapOffset.x || 0,
+                y: mapOffset.y || 0
+            };
+
+            // 判斷是否為多指觸摸（縮放手勢）
+            if (e.touches.length === 2) {
+                const touch1 = e.touches[0];
+                const touch2 = e.touches[1];
+
+                // 初始化觸摸點坐標，確保它們有值
+                touchStartX = touch1.clientX || 0;
+                touchStartY = touch1.clientY || 0;
+                touch2StartX = touch2.clientX || 0;
+                touch2StartY = touch2.clientY || 0;
+
+                // 記錄縮放中心點
+                pinchStartCenter = {
+                    x: (touch1.clientX + touch2.clientX) / 2,
+                    y: (touch1.clientY + touch2.clientY) / 2
+                };
+
+                // 計算初始兩指距離，確保不為零
+                pinchStartDistance = Math.max(0.1, Math.hypot(
+                    touch1.clientX - touch2.clientX,
+                    touch1.clientY - touch2.clientY
+                ));
+
+                // 初始化縮放相關變量
+                initialScale = currentScale || 1.0;
+                isPinching = true;
+                isDraggingMap = false;
+                scalingChanged = false; // 重置縮放變更標記
+
+                console.log("開始觸控縮放", {
+                    center: pinchStartCenter,
+                    distance: pinchStartDistance,
+                    initialScale: initialScale
+                });
+            }
+            else if (e.touches.length === 1) {
+                // 單指觸摸 - 拖拽模式
+                const touch = e.touches[0];
+                touchStartX = touch.clientX || 0;
+                touchStartY = touch.clientY || 0;
+
+                isDraggingMap = true;
+                isPinching = false;
+
+                console.log("開始觸控拖拽", {
+                    touchStartX: touchStartX,
+                    touchStartY: touchStartY
+                });
             }
         }, { passive: false });
 
@@ -1075,6 +1204,11 @@
             if (highlightCanvas) {
                 highlightCanvas.style.transform = transform;
                 highlightCanvas.style.transformOrigin = '0 0';
+            }
+
+            if (polylineLayer) {
+                polylineLayer.style.transform = transform;
+                polylineLayer.style.transformOrigin = '0 0';
             }
         }
 
@@ -1275,7 +1409,17 @@
             offset.y = touch.clientY - protractorTool.getBoundingClientRect().top;
         }, { passive: false });
 
+        // 修復量角尺拖拽功能
+
         document.addEventListener('mousemove', (e) => {
+            // 處理量角尺拖拽 - 這段代碼被遺漏了
+            if (isDragging) {
+                protractorTool.style.left = `${e.clientX - offset.x}px`;
+                protractorTool.style.top = `${e.clientY - offset.y}px`;
+                e.preventDefault(); // 防止其他事件干擾
+                return; // 如果正在拖拽量角尺，優先處理這個事件
+            }
+
             // 如果正在拖拽地圖，處理拖拽邏輯
             if (isDraggingMap) {
                 e.preventDefault();
@@ -1297,7 +1441,7 @@
             if (isProfileHovering && profileHighlightPoint) {
                 clearTimeout(debounceTimer);
             }
-        }, { passive: false }); // 添加 passive: false 選項
+        }, { passive: false });
 
         document.addEventListener('touchmove', (e) => {
             if(isDragging){
@@ -1505,76 +1649,61 @@
 
         function handleProfileClick(event) {
             if (!isProfileMode) return;
-
-            // 防止事件传播（避免拖曳地图）
             event.stopPropagation();
 
             try {
-                console.log("处理纵剖面点击");
-                // 获取点击位置
                 const rect = mapCanvas.getBoundingClientRect();
-                const clientX = event.clientX;
-                const clientY = event.clientY;
+                const screenX = event.clientX - rect.left;
+                const screenY = event.clientY - rect.top;
 
-                // 计算相对于变换后画布的位置
-                const mouseX = clientX - rect.left;
-                const mouseY = clientY - rect.top;
+                // 將螢幕坐標轉換為原始未縮放的畫布坐標
+                const normalizedX = (screenX - mapOffset.x) / currentScale;
+                const normalizedY = (screenY - mapOffset.y) / currentScale;
 
-                // 關鍵修正: 更精確地將屏幕座標轉換為地圖座標
-                const withoutOffsetX = mouseX - mapOffset.x;
-                const withoutOffsetY = mouseY - mapOffset.y;
+                console.log("縱剖面點擊坐標:", {screenX, screenY, normalizedX, normalizedY, currentScale});
 
-                // 使用畫布中心點進行轉換
-                const canvasCenterX = mapCanvas.width / 2;
-                const canvasCenterY = mapCanvas.height / 2;
-                const transformedX = canvasCenterX + (withoutOffsetX - canvasCenterX) / currentScale;
-                const transformedY = canvasCenterY + (withoutOffsetY - canvasCenterY) / currentScale;
-
-                // 计算地图的基本参数
+                // 計算地圖參數
                 const mapSize = Math.min(mapCanvas.width, mapCanvas.height) * 0.8;
                 const gridSegments = 100;
                 const pixelSize = mapSize / gridSegments;
                 const offsetX = (mapCanvas.width - gridSegments * pixelSize) / 2;
                 const offsetY = (mapCanvas.height - gridSegments * pixelSize) / 2;
 
-                // 计算相对于地形网格的位置
-                const gridX = (transformedX - offsetX) / pixelSize;
-                const gridY = (transformedY - offsetY) / pixelSize;
+                // 計算相對於地形網格的位置
+                const gridX = (normalizedX - offsetX) / pixelSize;
+                const gridY = (normalizedY - offsetY) / pixelSize;
 
-                console.log("点击坐标:", {mouseX, mouseY, transformedX, transformedY, gridX, gridY});
-
-                // 添加点（最多两个点）
+                // 添加點（最多兩個點）
                 if (profilePoints.length < 2) {
-                    // 检查点是否在有效范围内
+                    // 檢查點是否在有效範圍內
                     if (gridX >= 0 && gridX <= gridSegments && gridY >= 0 && gridY <= gridSegments) {
                         profilePoints.push({
-                            screenX: mouseX,
-                            screenY: mouseY,
-                            transformedX: transformedX,
-                            transformedY: transformedY,
+                            screenX: screenX,
+                            screenY: screenY,
+                            transformedX: normalizedX,
+                            transformedY: normalizedY,
                             gridX: gridX,
                             gridY: gridY
                         });
 
-                        console.log("添加纵剖面点:", profilePoints.length);
+                        console.log("添加縱剖面點:", profilePoints.length);
 
-                        // 如果已选两个点，则绘制纵剖面
+                        // 如果已選兩個點，則繪製縱剖面
                         if (profilePoints.length === 2) {
-                            console.log("绘制纵剖面线和图表");
                             generate2DMap(); // 重繪地圖以包含線條
                             setTimeout(() => {
                                 createProfileChart();
                                 showProfilePanel();
                             }, 100);
                         } else {
-                            // 重绘地图以显示第一个点
+                            // 重繪地圖以顯示第一個點
                             generate2DMap();
                         }
                     }
                 }
             } catch (error) {
-                console.error("处理纵剖面点击错误:", error);
-                alert("处理纵剖面点击时发生错误。请重试或重置工具。");
+                console.error("處理縱剖面點擊錯誤:", error);
+                alert("處理縱剖面點擊時發生錯誤。請重試或重置工具。");
                 resetProfileTool();
             }
         }
@@ -1584,23 +1713,31 @@
                 // 在地圖上繪製連線
                 if (profilePoints.length !== 2) return;
 
+                // 獲取地圖畫布和上下文
+                const mapCanvas = document.getElementById('map-canvas');
+                if (!mapCanvas) {
+                    console.error("找不到地圖畫布元素");
+                    return;
+                }
+
                 const mapContext = mapCanvas.getContext('2d');
+                if (!mapContext) {
+                    console.error("無法獲取地圖畫布上下文");
+                    return;
+                }
 
-                // *** 注意：drawProfileLine 通常在 generate2DMap 內部被調用 ***
-                // *** generate2DMap 已經處理了 save/restore 和 transform ***
-                // *** 所以這裡不需要再次應用 transform，除非它是獨立調用的 ***
-                // *** 在當前結構下，假設 generate2DMap 會調用它，所以移除獨立的 transform ***
+                // 保存上下文狀態
+                mapContext.save();
 
-                // mapContext.save(); // 移除 - generate2DMap 會處理
-                // mapContext.translate(mapOffset.x, mapOffset.y); // 移除
-                // ... 其他 transform // 移除
+                // 應用與地圖畫布相同的變換
+                mapContext.setTransform(currentScale, 0, 0, currentScale, mapOffset.x, mapOffset.y);
 
                 // 繪製連接線 - 使用 transformedX/Y
                 mapContext.beginPath();
                 mapContext.moveTo(profilePoints[0].transformedX, profilePoints[0].transformedY);
                 mapContext.lineTo(profilePoints[1].transformedX, profilePoints[1].transformedY);
                 mapContext.strokeStyle = '#ff0000';
-                mapContext.lineWidth = 3 / currentScale; // 考慮縮放調整線寬
+                mapContext.lineWidth = 3 / currentScale; // 根據縮放調整線寬
                 mapContext.stroke();
 
                 // 繪製點 - 使用 transformedX/Y
@@ -1613,37 +1750,59 @@
                     mapContext.strokeStyle = '#ffffff';
                     mapContext.lineWidth = 2 / currentScale;
                     mapContext.stroke();
-
-                    // *** 不再需要儲存 adjustedX/Y ***
-                    // delete point.adjustedX;
-                    // delete point.adjustedY;
                 }
 
-                // *** 高亮點的繪製現在由 drawHighlightPointOnly 獨立處理，這裡不再繪製 ***
-                /*
-                if (isProfileHovering && profileHighlightPoint) {
-                    // ... (移除高亮點繪製邏輯)
-                }
-                */
-
-                // mapContext.restore(); // 移除 - generate2DMap 會處理
+                // 恢復上下文狀態
+                mapContext.restore();
             } catch (error) {
                 console.error("繪製縱剖面線錯誤:", error);
             }
-            // addProfileHoverEffect(); // 這個應該在縱剖面面板顯示時調用一次即可
         }
 
         function createProfileChart() {
             try {
-                if (profilePoints.length !== 2) return;
+                console.log("開始繪製縱剖面圖");
+
+                if (profilePoints.length !== 2) {
+                    console.warn("縱剖面點不足，需要兩個點");
+                    return;
+                }
 
                 // 獲取縱剖面畫布和上下文
                 const canvas = profileCanvas;
                 const ctx = profileCtx;
 
-                // 調整畫布大小
-                canvas.width = canvas.offsetWidth || 800;
-                canvas.height = canvas.offsetHeight || 200;
+                // 確保畫布和上下文存在
+                if (!canvas || !ctx) {
+                    console.error("找不到縱剖面畫布或上下文");
+                    return;
+                }
+
+                // 檢查畫布尺寸是否有效
+                if (canvas.width <= 0 || canvas.height <= 0) {
+                    console.warn("畫布尺寸無效:", canvas.width, "x", canvas.height);
+
+                    // 嘗試重新獲取畫布尺寸
+                    const profileContent = profilePanel.querySelector('.profile-content');
+                    if (profileContent && profileContent.offsetWidth > 0 && profileContent.offsetHeight > 0) {
+                        canvas.width = profileContent.offsetWidth;
+                        canvas.height = profileContent.offsetHeight;
+                        console.log("已修正畫布尺寸:", canvas.width, "x", canvas.height);
+                    } else {
+                        // 最後的備用方案
+                        canvas.width = 800;
+                        canvas.height = 200;
+                        console.log("使用預設畫布尺寸: 800 x 200");
+                    }
+
+                    // 如果尺寸仍然無效，則中止繪製
+                    if (canvas.width <= 0 || canvas.height <= 0) {
+                        console.error("無法設置有效的畫布尺寸");
+                        return;
+                    }
+                }
+
+                console.log("使用畫布尺寸:", canvas.width, "x", canvas.height);
 
                 // 清除畫布
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1884,104 +2043,359 @@
             context.restore();
         }
 
+        // 新增 makeProfilePanelDraggable 函數
         function makeProfilePanelDraggable() {
             const profilePanel = document.getElementById('profile-panel');
-            const profileHeader = profilePanel.querySelector('.profile-header');
+            const profileHeader = document.querySelector('.profile-header');
 
-            let isDragging = false;
+            if (!profilePanel || !profileHeader) {
+                console.error("找不到縱剖面面板或標題欄");
+                return;
+            }
+
+            let isDraggingProfile = false;
             let dragOffset = { x: 0, y: 0 };
 
-            // 鼠标事件
-            profileHeader.addEventListener('mousedown', (e) => {
-                // 确保不是点击关闭按钮
+            // 移除之前可能存在的事件監聽器
+            profileHeader.removeEventListener('mousedown', handleProfileDragStart);
+            document.removeEventListener('mousemove', handleProfileDragMove);
+            document.removeEventListener('mouseup', handleProfileDragEnd);
+
+            profileHeader.removeEventListener('touchstart', handleProfileDragStart);
+            document.removeEventListener('touchmove', handleProfileDragMove);
+            document.removeEventListener('touchend', handleProfileDragEnd);
+
+            // 開始拖動處理
+            function handleProfileDragStart(e) {
+                // 確保不是點擊關閉按鈕
                 if (e.target.id === 'profile-close') return;
 
-                isDragging = true;
-                dragOffset.x = e.clientX - profilePanel.getBoundingClientRect().left;
-                dragOffset.y = e.clientY - profilePanel.getBoundingClientRect().top;
-                profilePanel.style.cursor = 'grabbing';
-            });
+                isDraggingProfile = true;
 
-            document.addEventListener('mousemove', (e) => {
-                if (!isDragging) return;
+                // 計算偏移
+                if (e.type === 'touchstart') {
+                    const touch = e.touches[0];
+                    dragOffset.x = touch.clientX - profilePanel.getBoundingClientRect().left;
+                    dragOffset.y = touch.clientY - profilePanel.getBoundingClientRect().top;
+                } else {
+                    dragOffset.x = e.clientX - profilePanel.getBoundingClientRect().left;
+                    dragOffset.y = e.clientY - profilePanel.getBoundingClientRect().top;
+                }
 
-                const left = e.clientX - dragOffset.x;
-                const top = e.clientY - dragOffset.y;
+                // 視覺反饋
+                profileHeader.style.cursor = 'grabbing';
 
-                // 确保面板不会被拖出屏幕
+                // 移除居中變換
+                profilePanel.style.transform = 'none';
+
+                e.preventDefault();
+            }
+
+            // 拖動處理
+            function handleProfileDragMove(e) {
+                if (!isDraggingProfile) return;
+
+                let clientX, clientY;
+                if (e.type === 'touchmove') {
+                    const touch = e.touches[0];
+                    clientX = touch.clientX;
+                    clientY = touch.clientY;
+                } else {
+                    clientX = e.clientX;
+                    clientY = e.clientY;
+                }
+
+                // 計算新位置
+                const left = clientX - dragOffset.x;
+                const top = clientY - dragOffset.y;
+
+                // 限制不超出屏幕
                 const maxX = window.innerWidth - profilePanel.offsetWidth;
                 const maxY = window.innerHeight - profilePanel.offsetHeight;
 
-                profilePanel.style.left = `${Math.max(0, Math.min(left, maxX))}px`;
-                profilePanel.style.top = `${Math.max(0, Math.min(top, maxY))}px`;
-                profilePanel.style.bottom = 'auto'; // 取消底部定位
-                profilePanel.style.transform = 'none'; // 取消原来的中心定位
-            });
-
-            document.addEventListener('mouseup', () => {
-                isDragging = false;
-                profilePanel.style.cursor = 'default';
-            });
-
-            // 触摸事件
-            profileHeader.addEventListener('touchstart', (e) => {
-                if (e.target.id === 'profile-close') return;
-
-                isDragging = true;
-                const touch = e.touches[0];
-                dragOffset.x = touch.clientX - profilePanel.getBoundingClientRect().left;
-                dragOffset.y = touch.clientY - profilePanel.getBoundingClientRect().top;
-                e.preventDefault(); // 防止滚动
-            }, { passive: false });
-
-            document.addEventListener('touchmove', (e) => {
-                if (!isDragging) return;
-
-                const touch = e.touches[0];
-                const left = touch.clientX - dragOffset.x;
-                const top = touch.clientY - dragOffset.y;
-
-                const maxX = window.innerWidth - profilePanel.offsetWidth;
-                const maxY = window.innerHeight - profilePanel.offsetHeight;
-
+                // 應用新位置
                 profilePanel.style.left = `${Math.max(0, Math.min(left, maxX))}px`;
                 profilePanel.style.top = `${Math.max(0, Math.min(top, maxY))}px`;
                 profilePanel.style.bottom = 'auto';
-                profilePanel.style.transform = 'none';
-                e.preventDefault();
-            }, { passive: false });
+                profilePanel.style.right = 'auto';
 
-            document.addEventListener('touchend', () => {
-                isDragging = false;
-            });
+                e.preventDefault();
+            }
+
+            // 結束拖動處理
+            function handleProfileDragEnd() {
+                if (!isDraggingProfile) return;
+
+                isDraggingProfile = false;
+                profileHeader.style.cursor = 'grab';
+            }
+
+            // 添加事件監聽器
+            profileHeader.addEventListener('mousedown', handleProfileDragStart);
+            document.addEventListener('mousemove', handleProfileDragMove);
+            document.addEventListener('mouseup', handleProfileDragEnd);
+
+            // 觸控支援
+            profileHeader.addEventListener('touchstart', handleProfileDragStart, { passive: false });
+            document.addEventListener('touchmove', handleProfileDragMove, { passive: false });
+            document.addEventListener('touchend', handleProfileDragEnd);
+
+            console.log("縱剖面面板拖動功能已啟用");
         }
 
-        // 在showProfilePanel函数中调用此函数
+        // 修正 showProfilePanel 函數
         function showProfilePanel() {
             profilePanel.style.display = 'flex';
 
-            // 初始设置为居中
+            // 初始設置為居中
             profilePanel.style.left = '50%';
             profilePanel.style.top = '50%';
             profilePanel.style.transform = 'translate(-50%, -50%)';
             profilePanel.style.bottom = 'auto';
 
-            // 确保面板可拖动
+            // 啟用拖動功能
             makeProfilePanelDraggable();
 
-             // *** 添加懸停效果監聽器 ***
-             addProfileHoverEffect(); // 確保在這裡調用
+            // 啟用調整大小功能
+            makeProfilePanelResizable();
 
-            // 确保 canvas 在显示后调整大小
+            // 添加懸停效果監聽器
+            addProfileHoverEffect();
+
+            // 確保 canvas 在顯示後調整大小
             setTimeout(() => {
-                if (profileCanvas) { // 添加檢查
-                    profileCanvas.width = profileCanvas.offsetWidth || 800;
-                    profileCanvas.height = profileCanvas.offsetHeight || 200;
-                    createProfileChart(); // 在调整大小后重新绘制
+                if (profileCanvas) {
+                    // 確保獲取有效尺寸
+                    const profileContent = profilePanel.querySelector('.profile-content');
+                    if (profileContent && profileContent.offsetWidth > 0 && profileContent.offsetHeight > 0) {
+                        profileCanvas.width = profileContent.offsetWidth;
+                        profileCanvas.height = profileContent.offsetHeight;
+                        console.log("設置畫布尺寸:", profileCanvas.width, "x", profileCanvas.height);
+                    } else {
+                        // 回退到預設值
+                        profileCanvas.width = 800;
+                        profileCanvas.height = 200;
+                        console.log("使用預設畫布尺寸: 800 x 200");
+                    }
+                    createProfileChart(); // 在調整大小後重新繪製
                 } else {
                     console.error("Profile canvas not found in showProfilePanel timeout");
                 }
             }, 100);
+        }
+
+        // 實現縱剖面視窗調整大小功能
+        javascript
+
+        複製
+        // 改進 makeProfilePanelResizable 函數，確保縱剖面圖正確響應大小變化
+        function makeProfilePanelResizable() {
+            const profilePanel = document.getElementById('profile-panel');
+            const resizeHandle = document.getElementById('profile-resize-handle');
+
+            if (!profilePanel || !resizeHandle) {
+                console.error("找不到縱剖面面板或調整大小控制點");
+                return;
+            }
+
+            let isResizing = false;
+            let startWidth, startHeight, startX, startY;
+            let resizeTimer = null; // 防抖計時器
+
+            // 鼠標事件 - 開始調整大小
+            resizeHandle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                isResizing = true;
+
+                // 記錄起始尺寸和鼠標位置
+                startWidth = profilePanel.offsetWidth;
+                startHeight = profilePanel.offsetHeight;
+                startX = e.clientX;
+                startY = e.clientY;
+
+                // 添加視覺反饋
+                resizeHandle.style.backgroundColor = 'rgba(0, 0, 0, 0.2)';
+                document.body.style.cursor = 'nwse-resize';
+            });
+
+            // 鼠標移動事件 - 調整大小過程
+            document.addEventListener('mousemove', (e) => {
+                if (!isResizing) return;
+
+                // 計算新的尺寸
+                const newWidth = startWidth + (e.clientX - startX);
+                const newHeight = startHeight + (e.clientY - startY);
+
+                // 限制最小尺寸
+                const minWidth = 300;
+                const minHeight = 150;
+
+                // 應用新尺寸
+                profilePanel.style.width = `${Math.max(minWidth, newWidth)}px`;
+                profilePanel.style.height = `${Math.max(minHeight, newHeight)}px`;
+
+                // 防止視窗超出螢幕
+                const rect = profilePanel.getBoundingClientRect();
+                if (rect.right > window.innerWidth) {
+                    profilePanel.style.width = `${window.innerWidth - rect.left}px`;
+                }
+                if (rect.bottom > window.innerHeight) {
+                    profilePanel.style.height = `${window.innerHeight - rect.top}px`;
+                }
+
+                // 取消之前的計時器，使用防抖方式避免頻繁重繪
+                if (resizeTimer) clearTimeout(resizeTimer);
+
+                // 設置新的計時器，在調整過程中偶爾更新圖表
+                resizeTimer = setTimeout(() => {
+                    updateProfileChartOnResize();
+                }, 200); // 200ms防抖
+            });
+
+            // 觸控事件支援 - 開始調整大小
+            resizeHandle.addEventListener('touchstart', (e) => {
+                if (e.touches.length !== 1) return;
+                e.preventDefault();
+
+                isResizing = true;
+                const touch = e.touches[0];
+
+                // 記錄起始尺寸和觸控位置
+                startWidth = profilePanel.offsetWidth;
+                startHeight = profilePanel.offsetHeight;
+                startX = touch.clientX;
+                startY = touch.clientY;
+
+                // 添加視覺反饋
+                resizeHandle.style.backgroundColor = 'rgba(0, 0, 0, 0.2)';
+            }, { passive: false });
+
+            // 觸控移動事件 - 調整大小過程
+            document.addEventListener('touchmove', (e) => {
+                if (!isResizing || e.touches.length !== 1) return;
+
+                e.preventDefault();
+                const touch = e.touches[0];
+
+                // 計算新的尺寸
+                const newWidth = startWidth + (touch.clientX - startX);
+                const newHeight = startHeight + (touch.clientY - startY);
+
+                // 限制最小尺寸
+                const minWidth = 300;
+                const minHeight = 150;
+
+                // 應用新尺寸
+                profilePanel.style.width = `${Math.max(minWidth, newWidth)}px`;
+                profilePanel.style.height = `${Math.max(minHeight, newHeight)}px`;
+
+                // 防止視窗超出螢幕
+                const rect = profilePanel.getBoundingClientRect();
+                if (rect.right > window.innerWidth) {
+                    profilePanel.style.width = `${window.innerWidth - rect.left}px`;
+                }
+                if (rect.bottom > window.innerHeight) {
+                    profilePanel.style.height = `${window.innerHeight - rect.top}px`;
+                }
+
+                // 取消之前的計時器
+                if (resizeTimer) clearTimeout(resizeTimer);
+
+                // 設置新計時器，在觸控調整過程中偶爾更新圖表
+                resizeTimer = setTimeout(() => {
+                    updateProfileChartOnResize();
+                }, 200); // 200ms防抖
+            }, { passive: false });
+
+            // 結束調整大小
+            function endResize() {
+                if (!isResizing) return;
+
+                isResizing = false;
+                resizeHandle.style.backgroundColor = ''; // 重設背景色
+                document.body.style.cursor = '';
+
+                // 清除防抖計時器
+                if (resizeTimer) {
+                    clearTimeout(resizeTimer);
+                    resizeTimer = null;
+                }
+
+                // 調整完成後立即重新繪製縱剖面圖
+                updateProfileChartOnResize();
+            }
+
+            // 鼠標事件 - 結束調整大小
+            document.addEventListener('mouseup', endResize);
+
+            // 觸控事件 - 結束調整大小
+            document.addEventListener('touchend', endResize);
+            document.addEventListener('touchcancel', endResize);
+
+            // 完全重新繪製縱剖面圖，確保與新的容器尺寸匹配
+            function updateProfileChartOnResize() {
+                try {
+                    // 獲取縱剖面畫布和內容區
+                    const profileCanvas = document.getElementById('profile-canvas');
+                    const profileContent = profilePanel.querySelector('.profile-content');
+
+                    if (!profileCanvas || !profileContent) {
+                        console.error("找不到縱剖面畫布或內容區");
+                        return;
+                    }
+
+                    // 獲取內容區的當前尺寸
+                    const contentWidth = profileContent.offsetWidth;
+                    const contentHeight = profileContent.offsetHeight;
+
+                    // 檢查尺寸是否有效
+                    if (contentWidth <= 0 || contentHeight <= 0) {
+                        console.warn("內容區尺寸無效:", contentWidth, "x", contentHeight);
+                        return;
+                    }
+
+                    console.log("重新設定畫布尺寸:", contentWidth, "x", contentHeight);
+
+                    // 調整畫布尺寸以匹配內容區
+                    profileCanvas.width = contentWidth;
+                    profileCanvas.height = contentHeight;
+
+                    // 完全重新繪製縱剖面圖
+                    createProfileChart();
+
+                    console.log("縱剖面圖已根據新尺寸重繪");
+                } catch (error) {
+                    console.error("更新縱剖面圖時發生錯誤:", error);
+                }
+            }
+
+            console.log("已啟用縱剖面視窗調整大小功能");
+        }
+
+
+        function handleMapDragStart(e) {
+            // 只有在沒有激活任何繪圖工具和測量工具時才啟用拖移
+            if (isProfileMode || isMapDrawing || isMapErasing || isPolylineMode) {
+                return;
+            }
+
+            // 阻止事件冒泡和默認行為
+            e.preventDefault();
+            e.stopPropagation();
+
+            // 明確設置拖移狀態
+            isDraggingMap = true;
+            console.log("開始拖移地圖");
+
+            // 保存點擊時的初始位置和當前偏移
+            dragStart.x = e.clientX;
+            dragStart.y = e.clientY;
+            initialDragOffset = {
+                x: mapOffset.x,
+                y: mapOffset.y
+            };
+
+            mapCanvas.style.cursor = 'grabbing';
         }
 
         function initScene() {
@@ -2349,13 +2763,18 @@
         // 在縱剖面畫布上添加滑鼠移動監聽
         function addProfileHoverEffect() {
             const profileCanvas = document.getElementById('profile-canvas');
+            if (!profileCanvas) {
+                console.error("找不到縱剖面畫布元素");
+                return;
+            }
+
             let debounceTimer;
 
             profileCanvas.addEventListener('mousemove', (e) => {
                 if (profilePoints.length !== 2) return;
 
                 // 清除之前的計時器
-                clearTimeout(debounceTimer);
+                if (debounceTimer) clearTimeout(debounceTimer);
 
                 // 設置新的計時器
                 debounceTimer = setTimeout(() => {
@@ -2386,7 +2805,7 @@
 
             profileCanvas.addEventListener('mouseout', () => {
                 isProfileHovering = false;
-                clearTimeout(debounceTimer);
+                if (debounceTimer) clearTimeout(debounceTimer);
                 // 移除高亮點
                 profileHighlightPoint = null;
                 // 清除高亮層
@@ -2403,21 +2822,21 @@
             const p1 = profilePoints[0];
             const p2 = profilePoints[1];
 
-            // relativePosition 就是插值因子 t (0 到 1)
+            // relativePosition 是插值因子 t (0 到 1)
             const t = relativePosition;
 
-            // 使用原始的 transformedX/Y 進行線性插值，計算未縮放/未偏移的座標
+            // 使用原始的 transformedX/Y 進行線性插值，計算未縮放坐標
             const highlightTransformedX = p1.transformedX + (p2.transformedX - p1.transformedX) * t;
             const highlightTransformedY = p1.transformedY + (p2.transformedY - p1.transformedY) * t;
 
-            // 保存高亮點的原始變換後座標和插值因子 t
+            // 保存高亮點的未縮放坐標和插值因子
             profileHighlightPoint = {
-                transformedX: highlightTransformedX, // 存儲未縮放的座標
+                transformedX: highlightTransformedX, // 存儲未縮放的坐標
                 transformedY: highlightTransformedY,
-                t: t // 存儲插值因子，可能有用
+                t: t // 存儲插值因子
             };
 
-            // 使用覆蓋層繪製高亮點 (觸發 redrawHighlightPointOnly)
+            // 繪製高亮點
             drawHighlightPointOnly();
         }
 
@@ -2425,11 +2844,11 @@
         function drawHighlightPointOnly() {
             // 檢查條件
             if (!isMapMode || !isProfileMode || !isProfileHovering || !profileHighlightPoint || !highlightContext) {
-                 // 如果條件不滿足，確保清除之前的繪製
-                 if (highlightContext) {
-                     highlightContext.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
-                 }
-                 return;
+                // 如果條件不滿足，確保清除之前的繪製
+                if (highlightContext) {
+                    highlightContext.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+                }
+                return;
             }
 
             // 清除整個高亮層畫布
@@ -2438,23 +2857,18 @@
             // 保存當前畫布狀態
             highlightContext.save();
 
-            // *** 關鍵：應用與 mapCanvas 完全相同的變換 ***
-            highlightContext.translate(mapOffset.x, mapOffset.y);
-            highlightContext.translate(highlightCanvas.width / 2, highlightCanvas.height / 2);
-            highlightContext.scale(currentScale, currentScale);
-            highlightContext.translate(-highlightCanvas.width / 2, -highlightCanvas.height / 2);
+            // 應用與地圖畫布相同的變換
+            highlightContext.setTransform(currentScale, 0, 0, currentScale, mapOffset.x, mapOffset.y);
 
-            // 使用存儲在 profileHighlightPoint 中的未縮放/未偏移座標
+            // 使用存儲在 profileHighlightPoint 中的未縮放坐標
             const x = profileHighlightPoint.transformedX;
             const y = profileHighlightPoint.transformedY;
 
-            // 繪製黃色高亮點
+            // 繪製高亮點
             highlightContext.beginPath();
-            // 根據 currentScale 調整圓點視覺大小
             highlightContext.arc(x, y, 8 / currentScale, 0, 2 * Math.PI);
             highlightContext.fillStyle = '#ffff00'; // 黃色
             highlightContext.strokeStyle = '#000000'; // 黑色邊框
-             // 根據 currentScale 調整線條視覺寬度
             highlightContext.lineWidth = 2 / currentScale;
             highlightContext.fill();
             highlightContext.stroke();
@@ -3463,19 +3877,29 @@
                 // 設置畫布大小
                 function resizeMapCanvas() {
                     const mapContainer = document.getElementById('map-container');
-                    mapDrawingCanvas.width = mapContainer.offsetWidth;
-                    mapDrawingCanvas.height = mapContainer.offsetHeight;
+                    mapCanvas.width = mapContainer.offsetWidth;
+                    mapCanvas.height = mapContainer.offsetHeight;
 
-                    // 設置繪圖上下文屬性
-                    mapDrawingContext.lineCap = 'round';
-                    mapDrawingContext.lineJoin = 'round';
-                    mapDrawingContext.lineWidth = 3;
-
-                    // 重繪歷史內容
-                    if (mapHistoryIndex >= 0 && mapDrawingHistory[mapHistoryIndex]) {
-                        mapDrawingContext.drawImage(mapDrawingHistory[mapHistoryIndex], 0, 0);
+                    // 同步更新其他画布
+                    if (mapDrawingCanvas) {
+                        mapDrawingCanvas.width = mapCanvas.width;
+                        mapDrawingCanvas.height = mapCanvas.height;
                     }
+
+                    if (highlightCanvas) {
+                        highlightCanvas.width = mapCanvas.width;
+                        highlightCanvas.height = mapCanvas.height;
+                    }
+
+                    if (polylineLayer) {
+                        polylineLayer.width = mapCanvas.width;
+                        polylineLayer.height = mapCanvas.height;
+                    }
+
+                    // 重新绘制内容
+                    generate2DMap();
                 }
+
 
                 // 初始調整畫布大小
                 resizeMapCanvas();
@@ -3492,37 +3916,62 @@
 
                 // 取得事件坐標
                 function getMapEventCoordinates(e) {
-                    let clientX, clientY;
+                    try {
+                        // 觸摸事件處理
+                        if (e.touches && e.touches[0]) {
+                            const rect = mapDrawingCanvas.getBoundingClientRect();
+                            const screenX = e.touches[0].clientX - rect.left;
+                            const screenY = e.touches[0].clientY - rect.top;
 
-                    if (e.touches && e.touches[0]) {
-                        clientX = e.touches[0].clientX;
-                        clientY = e.touches[0].clientY;
-                    } else {
-                        clientX = e.clientX;
-                        clientY = e.clientY;
+                            // 將屏幕坐標轉換為原始畫布坐標
+                            const normalizedX = (screenX - mapOffset.x) / currentScale;
+                            const normalizedY = (screenY - mapOffset.y) / currentScale;
+
+                            return {
+                                x: normalizedX,
+                                y: normalizedY
+                            };
+                        }
+
+                        // 滑鼠事件處理
+                        const rect = mapDrawingCanvas.getBoundingClientRect();
+                        const screenX = e.clientX - rect.left;
+                        const screenY = e.clientY - rect.top;
+
+                        // 將屏幕坐標轉換為原始畫布坐標
+                        const normalizedX = (screenX - mapOffset.x) / currentScale;
+                        const normalizedY = (screenY - mapOffset.y) / currentScale;
+
+                        // 加入調試日誌以追蹤坐標轉換
+                        console.log("滑鼠坐標:", {
+                            screen: {x: screenX, y: screenY},
+                            normalized: {x: normalizedX, y: normalizedY},
+                            offset: mapOffset,
+                            scale: currentScale
+                        });
+
+                        return {
+                            x: normalizedX,
+                            y: normalizedY
+                        };
+                    } catch (error) {
+                        console.error("獲取地圖事件坐標錯誤:", error);
+                        return {x: 0, y: 0}; // 發生錯誤時返回默認坐標
+                    }
+                }
+
+                function handleMapZoom() {
+                    // 更新地圖位置
+                    updateMapContainerPosition();
+
+                    // 如果用戶正在繪圖，要停止繪圖並保存當前狀態
+                    if (isMapDrawing) {
+                        isMapDrawing = false;
+                        saveMapDrawingToHistory();
                     }
 
-                    const rect = mapDrawingCanvas.getBoundingClientRect();
-                    const screenX = clientX - rect.left;
-                    const screenY = clientY - rect.top;
-
-                    // 關鍵修正: 將繪圖座標考慮縮放和偏移
-                    // 1. 取消偏移影響
-                    const withoutOffsetX = screenX - mapOffset.x;
-                    const withoutOffsetY = screenY - mapOffset.y;
-
-                    // 2. 使用畫布中心點進行轉換
-                    const canvasCenterX = mapDrawingCanvas.width / 2;
-                    const canvasCenterY = mapDrawingCanvas.height / 2;
-                    const transformedX = canvasCenterX + (withoutOffsetX - canvasCenterX) / currentScale;
-                    const transformedY = canvasCenterY + (withoutOffsetY - canvasCenterY) / currentScale;
-
-                    return {
-                        x: transformedX,
-                        y: transformedY,
-                        originalX: screenX,
-                        originalY: screenY
-                    };
+                    // 重新生成地圖
+                    generate2DMap();
                 }
 
                 function startMapDraw(e) {
@@ -3538,9 +3987,10 @@
                     const coords = getMapEventCoordinates(e);
                     [lastMapX, lastMapY] = [coords.x, coords.y];
 
-                    // 设置绘图模式
+                    // 设置绘图模式并记得在后续绘制时保存和恢复上下文状态
                     mapDrawingContext.globalCompositeOperation = isMapErasing ? 'destination-out' : 'source-over';
-                    mapDrawingContext.lineWidth = isMapErasing ? document.getElementById('eraser-size').value * 2 : 3;
+
+                    // 实际线宽将在绘制时应用变换
 
                     // 如果是第一次绘图，保存初始空白状态
                     if (mapHistoryIndex === -1) {
@@ -3556,11 +4006,25 @@
 
                     const coords = getMapEventCoordinates(e);
 
+                    // 保存當前的上下文狀態
+                    mapDrawingContext.save();
+
+                    // 應用與地圖畫布相同的變換 - 確保與地圖保持一致
+                    mapDrawingContext.setTransform(currentScale, 0, 0, currentScale, mapOffset.x, mapOffset.y);
+
+                    // 現在可以直接使用轉換後的坐標進行繪製
                     mapDrawingContext.beginPath();
                     mapDrawingContext.moveTo(lastMapX, lastMapY);
                     mapDrawingContext.lineTo(coords.x, coords.y);
                     mapDrawingContext.strokeStyle = isMapErasing ? 'rgba(0,0,0,1)' : mapCurrentColor;
+                    // 調整線寬，確保在任何縮放比例下都保持視覺一致性
+                    mapDrawingContext.lineWidth = isMapErasing ?
+                        (document.getElementById('eraser-size').value * 2 / currentScale) :
+                        (3 / currentScale);
                     mapDrawingContext.stroke();
+
+                    // 恢復上下文狀態
+                    mapDrawingContext.restore();
 
                     [lastMapX, lastMapY] = [coords.x, coords.y];
                 }
@@ -3578,22 +4042,37 @@
 
                 // 保存繪圖歷史
                 function saveMapDrawingToHistory() {
-                    // 移除當前位置之後的歷史記錄
-                    mapDrawingHistory = mapDrawingHistory.slice(0, mapHistoryIndex + 1);
+                    try {
+                        // 移除當前位置之後的歷史記錄
+                        mapDrawingHistory = mapDrawingHistory.slice(0, mapHistoryIndex + 1);
 
-                    // 創建新的畫布並複製當前內容
-                    const newCanvas = document.createElement('canvas');
-                    newCanvas.width = mapDrawingCanvas.width;
-                    newCanvas.height = mapDrawingCanvas.height;
+                        // 創建新的畫布並複製當前內容
+                        const newCanvas = document.createElement('canvas');
+                        newCanvas.width = mapDrawingCanvas.width;
+                        newCanvas.height = mapDrawingCanvas.height;
+                        const newContext = newCanvas.getContext('2d');
 
-                    // 只有當畫布有尺寸時才複製
-                    if (newCanvas.width > 0 && newCanvas.height > 0) {
-                        newCanvas.getContext('2d').drawImage(mapDrawingCanvas, 0, 0);
+                        // 檢查畫布尺寸是否有效
+                        if (newCanvas.width <= 0 || newCanvas.height <= 0) {
+                            console.error("嘗試創建無效尺寸的畫布:", newCanvas.width, newCanvas.height);
+                            return;
+                        }
+
+                        // 在複製內容時，使用原始變換（不應用比例和偏移）
+                        newContext.drawImage(mapDrawingCanvas, 0, 0);
+
+                        // 添加到歷史記錄，同時存儲當前的變換狀態
+                        mapDrawingHistory.push({
+                            canvas: newCanvas,
+                            scale: currentScale,
+                            offset: {x: mapOffset.x, y: mapOffset.y}
+                        });
+                        mapHistoryIndex++;
+
+                        console.log("已保存繪圖歷史，索引:", mapHistoryIndex, "畫布尺寸:", newCanvas.width, "x", newCanvas.height);
+                    } catch (error) {
+                        console.error("保存繪圖歷史錯誤:", error);
                     }
-
-                    // 添加到歷史記錄
-                    mapDrawingHistory.push(newCanvas);
-                    mapHistoryIndex++;
                 }
 
                 // 重繪畫布
@@ -3636,10 +4115,17 @@
                 function updateMapEraserIndicator(e) {
                     if (isMapErasing) {
                         const size = document.getElementById('eraser-size').value * 2;
-                        mapEraserIndicator.style.width = `${size}px`;
-                        mapEraserIndicator.style.height = `${size}px`;
-                        mapEraserIndicator.style.left = `${e.clientX - size/2}px`;
-                        mapEraserIndicator.style.top = `${e.clientY - size/2}px`;
+
+                        // 获取鼠标在原始坐标系统中的位置
+                        const rect = mapDrawingCanvas.getBoundingClientRect();
+                        const screenX = e.clientX - rect.left;
+                        const screenY = e.clientY - rect.top;
+
+                        // 应用视觉指示器的大小和位置，考虑当前缩放
+                        mapEraserIndicator.style.width = `${size * currentScale}px`;
+                        mapEraserIndicator.style.height = `${size * currentScale}px`;
+                        mapEraserIndicator.style.left = `${e.clientX - size * currentScale/2}px`;
+                        mapEraserIndicator.style.top = `${e.clientY - size * currentScale/2}px`;
                         mapEraserIndicator.style.display = 'block';
                     } else {
                         mapEraserIndicator.style.display = 'none';
@@ -4034,8 +4520,8 @@
                       const mouseX = e.clientX;
                       const mouseY = e.clientY;
 
-                      // 記錄舊的縮放值
-                      const oldScale = currentScale;
+                      // 記錄舊的縮放值 - 這是關鍵修復，確保oldScale始終有值
+                      const oldScale = currentScale || 1.0;
 
                       // 調整縮放速度 (更溫和的縮放)
                       const zoomSpeed = 0.03; // 3%的縮放變化率
@@ -4052,21 +4538,8 @@
                       // 限制縮放範圍
                       currentScale = Math.max(0.5, Math.min(currentScale, 3));
 
-                      // ----------------- 關鍵改進 ---------------------
-                      // 直接公式: 我們想要保持滑鼠下的點在縮放前後不變
-                      // 如果 P 是滑鼠指向的原始點，那麼:
-                      // P_screen = P * oldScale + oldOffset
-                      // 縮放後，我們希望:
-                      // P_screen = P * newScale + newOffset
-                      // 因此:
-                      // newOffset = P_screen - P * newScale
-                      // 但 P = (P_screen - oldOffset) / oldScale
-                      // 代入:
-                      // newOffset = P_screen - ((P_screen - oldOffset) / oldScale) * newScale
-                      // 化簡:
-                      // newOffset = P_screen * (1 - newScale/oldScale) + oldOffset * (newScale/oldScale)
-
-                      const scaleFactor = currentScale / oldScale;
+                      // 計算縮放因子，確保這裡不會有除零錯誤
+                      const scaleFactor = (oldScale !== 0) ? (currentScale / oldScale) : 1.0;
 
                       // 計算新的偏移量，核心公式
                       mapOffset.x = mouseX * (1 - scaleFactor) + mapOffset.x * scaleFactor;
@@ -4077,6 +4550,15 @@
 
                       // 重新生成地圖以確保高質量顯示
                       generate2DMap();
+
+                      // 可以增加調試信息
+                      console.log("地圖縮放:", {
+                          oldScale: oldScale,
+                          newScale: currentScale,
+                          mouseX: mouseX,
+                          mouseY: mouseY,
+                          scaleFactor: scaleFactor
+                      });
                   });
                 }
 
@@ -4227,21 +4709,13 @@
                 highlightContext = highlightCanvas.getContext('2d');
 
                 mapCanvas.addEventListener('click', handleMapClick);
-                // 添加觸控支援
+                // 添加觸控支持
                 mapCanvas.addEventListener('touchend', function(e) {
-                    // 在touchend時觸發自定義點擊事件，確保在移動設備上也能用
+                    // 確保不是在拖曳或縮放
                     if (!isDraggingMap && !isPinching) {
                         e.preventDefault();
-
-                        // 將觸控轉換為模擬點擊
                         const touch = e.changedTouches[0];
-                        const rect = mapCanvas.getBoundingClientRect();
-
-                        // 同樣應用正確的座標轉換計算
-                        const screenX = touch.clientX - rect.left;
-                        const screenY = touch.clientY - rect.top;
-
-                        // 模擬點擊事件並傳入原始座標，由處理函數進行轉換
+                        // 轉換觸控為點擊事件
                         const clickEvent = new MouseEvent('click', {
                             clientX: touch.clientX,
                             clientY: touch.clientY,
@@ -4298,38 +4772,66 @@
             if (isMapDrawing || document.querySelector('.map-color-btn.active') || isMapErasing) {
                 return;
             }
-
             if (!isPolylineMode) return;
+
             const mapCanvas = document.getElementById('map-canvas');
             if (!mapCanvas) return;
 
             const rect = mapCanvas.getBoundingClientRect();
-            // 获取屏幕点击坐标
+
+            // 獲取點擊位置
             const screenX = event.clientX - rect.left;
             const screenY = event.clientY - rect.top;
 
-            // 关键修正: 更精确地将屏幕坐标转换为地图坐标
-            // 1. 取消偏移影响
-            const withoutOffsetX = screenX - mapOffset.x;
-            const withoutOffsetY = screenY - mapOffset.y;
+            // 轉換為未縮放座標
+            const normalizedX = (screenX - mapOffset.x) / currentScale;
+            const normalizedY = (screenY - mapOffset.y) / currentScale;
 
-            // 2. 获取地图的中心点
-            const canvasCenterX = mapCanvas.width / 2;
-            const canvasCenterY = mapCanvas.height / 2;
+            // 獲取地圖繪製參數 - 與 generate2DMap 中完全一致
+            const mapSize = Math.min(mapCanvas.width, mapCanvas.height) * 0.8;
+            const gridSegments = 100;
+            const pixelSize = mapSize / gridSegments;
+            const offsetX = (mapCanvas.width - gridSegments * pixelSize) / 2;
+            const offsetY = (mapCanvas.height - gridSegments * pixelSize) / 2;
 
-            // 3. 考虑缩放和中心点
-            const transformedX = canvasCenterX + (withoutOffsetX - canvasCenterX) / currentScale;
-            const transformedY = canvasCenterY + (withoutOffsetY - canvasCenterY) / currentScale;
+            // 計算相對於地圖繪製區域的位置
+            // 注意: 這裡先檢查點擊位置是否在地圖區域內
+            const relX = normalizedX - offsetX;
+            const relY = normalizedY - offsetY;
 
-            // 保存转换后的坐标
+            // 將相對位置轉換為網格座標
+            const gridX = Math.round(relX / pixelSize);
+            const gridY = Math.round(relY / pixelSize);
+
+            // 檢查網格座標是否有效 (在 0-gridSegments 範圍內)
+            if (gridX < 0 || gridX > gridSegments || gridY < 0 || gridY > gridSegments) {
+                console.log("點擊在地圖範圍外");
+                return; // 點擊在地圖外，忽略
+            }
+
+            // 將網格座標轉回標準化的畫布座標 (重要修改)
+            const snapX = offsetX + gridX * pixelSize;
+            const snapY = offsetY + gridY * pixelSize;
+
+            console.log("網格座標計算:", {
+                screenCoords: { x: screenX, y: screenY },
+                normalizedCoords: { x: normalizedX, y: normalizedY },
+                mapOffset: { x: offsetX, y: offsetY },
+                gridCoords: { x: gridX, y: gridY },
+                snappedCoords: { x: snapX, y: snapY }
+            });
+
+            // 儲存點信息
             polylinePoints.push({
                 screenX: screenX,
                 screenY: screenY,
-                transformedX: transformedX,
-                transformedY: transformedY
+                transformedX: snapX,       // 這是關鍵 - 使用對齊到網格的座標
+                transformedY: snapY,       // 而不是直接使用點擊位置
+                gridX: gridX,
+                gridY: gridY
             });
 
-            // 重绘地图和连线
+            // 重繪地圖和連線
             generate2DMap();
             calculateDistance();
         }
@@ -4358,25 +4860,43 @@
         function calculateDistance() {
             totalDistance = 0;
             if (polylinePoints.length < 2) {
-                updateStatusBarWithDistance(totalDistance); // 確保沒有點時也更新狀態欄
+                updateStatusBarWithDistance(totalDistance);
                 return;
             }
+
+            // 獲取地圖參數（不受縮放影響的固定參數）
+            const mapCanvas = document.getElementById('map-canvas');
+            const mapSize = Math.min(mapCanvas.width, mapCanvas.height) * 0.8;
+            const gridSegments = 100;
+            const terrainSizeMeters = 100; // 地形尺寸為100米
+
+            // 計算基本像素尺寸（每個網格的像素大小）
+            const basePixelSize = mapSize / gridSegments;
+
+            // 計算像素到實際距離的轉換比例
+            const pixelToMeterRatio = terrainSizeMeters / (gridSegments * basePixelSize);
 
             for (let i = 0; i < polylinePoints.length - 1; i++) {
                 const p1 = polylinePoints[i];
                 const p2 = polylinePoints[i + 1];
 
-                // 使用变换后的坐标计算距离
-                const dist = Math.hypot(
+                // 計算點間像素距離（使用未縮放座標）
+                const pixelDist = Math.hypot(
                     p2.transformedX - p1.transformedX,
                     p2.transformedY - p1.transformedY
                 );
 
-                // 使用全局的 pixelSize 計算實際距離
-                const distance = dist / pixelSize;
-                totalDistance += distance;
+                // 將像素距離轉換為網格距離
+                const offsetX = (mapCanvas.width - gridSegments * basePixelSize) / 2;
+                const offsetY = (mapCanvas.height - gridSegments * basePixelSize) / 2;
+
+                // 確保使用畫布上像素與實際地形的比例
+                const meterDist = pixelDist * (terrainSizeMeters / (gridSegments * basePixelSize));
+
+                totalDistance += meterDist;
             }
-            updateStatusBarWithDistance(totalDistance); // 更新状态栏
+
+            updateStatusBarWithDistance(totalDistance);
         }
 
         function updateStatusBarWithDistance(distance) {
@@ -4390,35 +4910,43 @@
         function drawPolyline(context, offsetX, offsetY) {
             if (polylinePoints.length < 2) return;
 
-            // 保存上下文状态
+            console.log("繪製連線，點數:", polylinePoints.length);
+
+            // 保存上下文狀態
             context.save();
 
-            context.strokeStyle = 'red';
-            context.lineWidth = 2 / currentScale; // 調整線寬以適應縮放
+            // 應用與地圖畫布相同的變換
+            context.setTransform(currentScale, 0, 0, currentScale, mapOffset.x, mapOffset.y);
 
+            // 設置線條樣式
+            context.strokeStyle = 'red';
+            context.lineWidth = 2 / currentScale; // 根據縮放調整線寬
+
+            // 繪製連線
             context.beginPath();
-            // 使用transformedX/Y坐标绘制
+
+            // 使用轉換後的網格交點坐標
             context.moveTo(polylinePoints[0].transformedX, polylinePoints[0].transformedY);
             for (let i = 1; i < polylinePoints.length; i++) {
                 context.lineTo(polylinePoints[i].transformedX, polylinePoints[i].transformedY);
             }
             context.stroke();
 
-            // 繪製每個點
+            // 繪製點
             context.fillStyle = 'black';
             for (let i = 0; i < polylinePoints.length; i++) {
                 context.beginPath();
                 context.arc(
                     polylinePoints[i].transformedX,
                     polylinePoints[i].transformedY,
-                    4 / currentScale, // 根據縮放調整點的大小
+                    4 / currentScale, // 根據縮放調整點大小
                     0,
                     2 * Math.PI
                 );
                 context.fill();
             }
 
-            // 恢复上下文状态
+            // 恢復上下文狀態
             context.restore();
         }
 
@@ -4477,29 +5005,52 @@
                     mapDrawingCanvas.width = mapCanvas.width;
                     mapDrawingCanvas.height = mapCanvas.height;
 
+                    // 重新繪製歷史內容（添加更多錯誤檢查）
+                    const mapDrawingContext = mapDrawingCanvas.getContext('2d');
+                    mapDrawingContext.clearRect(0, 0, mapDrawingCanvas.width, mapDrawingCanvas.height);
+
                     if (mapHistoryIndex >= 0 && mapDrawingHistory[mapHistoryIndex]) {
-                        const mapDrawingContext = mapDrawingCanvas.getContext('2d');
-                        mapDrawingContext.drawImage(mapDrawingHistory[mapHistoryIndex], 0, 0);
+                        const historyItem = mapDrawingHistory[mapHistoryIndex];
+                        const historyCanvas = historyItem.canvas;
+
+                        // 檢查歷史畫布是否有效
+                        if (historyCanvas &&
+                            historyCanvas.width > 0 &&
+                            historyCanvas.height > 0 &&
+                            mapDrawingCanvas.width > 0 &&
+                            mapDrawingCanvas.height > 0) {
+
+                            try {
+                                // 先清除畫布
+                                mapDrawingContext.clearRect(0, 0, mapDrawingCanvas.width, mapDrawingCanvas.height);
+
+                                // 直接繪製歷史畫布（不應用任何變換）
+                                mapDrawingContext.drawImage(historyCanvas, 0, 0);
+
+                                console.log("成功從歷史記錄重繪畫布");
+                            } catch (error) {
+                                console.error("從歷史繪製錯誤:", error, "歷史尺寸:", historyCanvas.width, "x", historyCanvas.height, "目標尺寸:", mapDrawingCanvas.width, "x", mapDrawingCanvas.height);
+                            }
+                        } else {
+                            console.warn("無效的歷史畫布或目標畫布尺寸");
+                        }
                     }
                 }
 
                 if (highlightCanvas) {
                     highlightCanvas.width = mapCanvas.width;
                     highlightCanvas.height = mapCanvas.height;
-                    highlightCanvas.style.transform = `translate(${mapOffset.x}px, ${mapOffset.y}px)`;
                 }
 
                 // 清除整個畫布並設置為純白色
                 mapContext.fillStyle = '#ffffff';
                 mapContext.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
 
-                // 保存畫布狀態並應用變換
+                // 保存畫布狀態
                 mapContext.save();
-                // *** 應用變換 ***
-                mapContext.translate(mapOffset.x, mapOffset.y);
-                mapContext.translate(mapCanvas.width / 2, mapCanvas.height / 2);
-                mapContext.scale(currentScale, currentScale);
-                mapContext.translate(-mapCanvas.width / 2, -mapCanvas.height / 2);
+
+                // 關鍵修改：使用簡單直接變換，與 CSS 變換保持一致
+                mapContext.setTransform(currentScale, 0, 0, currentScale, mapOffset.x, mapOffset.y);
 
                 // 計算地圖繪製參數
                 const positions = terrain.geometry.attributes.position.array;
@@ -4519,16 +5070,13 @@
                 mapContext.fillStyle = '#ffffff';
                 mapContext.fillRect(offsetX, offsetY, gridSegments * pixelSize, gridSegments * pixelSize);
 
-                // 如果未啟用調試模式，只繪製等高線；否則繪製地形顏色
+                // 繪製等高線或地形顏色
                 if (!debugMode) {
-                    // 只繪製等高線，不渲染地形顏色
                     drawOnlyContours(mapContext, heightData, offsetX, offsetY, pixelSize);
                 } else {
-                    // 調試模式：完整渲染地形顏色和等高線
                     if (typeof drawExactContours === 'function') {
                         drawExactContours(mapContext, heightData, offsetX, offsetY, pixelSize);
                     } else {
-                        console.warn('drawExactContours 函數不存在，使用替代方法');
                         drawSmoothContours(mapContext, positions, gridSize, heightData.minHeight, heightData.maxHeight, offsetX, offsetY, pixelSize);
                     }
                 }
@@ -4541,30 +5089,20 @@
                 drawMarkersOnMap(mapContext, offsetX, offsetY, pixelSize);
 
                 // 繪製連線和剖面點
-                if (isPolylineMode) {
-                    drawPolyline(mapContext, offsetX, offsetY); // 確保傳遞正確參數
+                if (isPolylineMode && polylinePoints.length > 0) {
+                    drawPolyline(mapContext, offsetX, offsetY);
                 }
                 if (isProfileMode && profilePoints.length > 0) {
-                     // *** 調用 drawProfileLine 來繪製線和端點 ***
-                     drawProfileLine(); // generate2DMap 內部調用，已在正確的 transform 下
+                    drawProfileLine();
                 }
 
-                 mapContext.restore(); // 恢復畫布狀態
+                // 恢復畫布狀態
+                mapContext.restore();
 
-                 // 更新繪圖畫布位置
-                 if (mapDrawingCanvas) {
-                     mapDrawingCanvas.style.transform = `translate(${mapOffset.x}px, ${mapOffset.y}px)`;
-                 }
-                 // 更新高亮畫布位置
-                 if (highlightCanvas) {
-                     highlightCanvas.style.transform = `translate(${mapOffset.x}px, ${mapOffset.y}px)`;
-                 }
-
-                 // 如果正在懸停，需要強制重繪高亮點，因為地圖變換已更新
-                 if (isProfileHovering && profileHighlightPoint) {
+                // 如果正在懸停，需要強制重繪高亮點
+                if (isProfileHovering && profileHighlightPoint) {
                     drawHighlightPointOnly();
-                 }
-
+                }
 
                 console.timeEnd('generate2DMap');
             } catch (error) {
