@@ -6,7 +6,7 @@
     <meta name="apple-mobile-web-app-title" content="地形沙箱">
     <link rel="apple-touch-icon" href="圖標URL.png">
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>地形沙箱</title>
     <meta charset="UTF-8">
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
@@ -161,6 +161,11 @@
             transition: opacity 0.3s;
             z-index: 1001;
             pointer-events: none;
+        }
+        .drawing-toolbar .tool-tooltip,
+        .map-drawing-toolbar .tool-tooltip {
+            left: auto;
+            right: 45px;
         }
         .tool-button:hover .tool-tooltip {
             opacity: 1;
@@ -799,6 +804,11 @@
         let isMapErasing = false;
         let mapCurrentColor = '#ff0000';
 
+        // 添加觸控縮放相關變量
+        let isPinching = false;
+        let pinchStartDistance = 0;
+        let initialScale = 1;
+
         // 初始化入口函數，確保DOM完全載入後才執行
         window.addEventListener('load', init);
 
@@ -886,23 +896,90 @@
             console.log("開始拖移地圖", isDraggingMap);
         });
 
-        // 修改mousemove事件处理器
-        document.addEventListener('mousemove', (e) => {
-            if (isDraggingMap) {
-                // 計算拖動的距離
-                const deltaX = e.clientX - dragStart.x;
-                const deltaY = e.clientY - dragStart.y;
+        // 触摸移动事件 - 处理拖拽和缩放
+        document.addEventListener('touchmove', (e) => {
+            if (isPinching && e.touches.length === 2) {
+                // 处理双指缩放
+                e.preventDefault();
 
-                // 更新地圖偏移量
+                // 计算当前两指距离
+                const touch1 = e.touches[0];
+                const touch2 = e.touches[1];
+                const currentDistance = Math.hypot(
+                    touch1.clientX - touch2.clientX,
+                    touch1.clientY - touch2.clientY
+                );
+
+                // 计算缩放比例变化
+                const scaleFactor = currentDistance / pinchStartDistance;
+
+                // 更新地图缩放级别
+                const oldScale = currentScale;
+                currentScale = Math.max(0.5, Math.min(initialScale * scaleFactor, 3));
+
+                // 调整偏移量以保持视图中心
+                mapOffset.x = mapOffset.x * (currentScale / oldScale);
+                mapOffset.y = mapOffset.y * (currentScale / oldScale);
+
+                // 更新地图
+                updateMapContainerPosition();
+            }
+            else if (isDraggingMap && e.touches.length === 1) {
+                // 处理单指拖拽
+                e.preventDefault();
+
+                const touch = e.touches[0];
+                const deltaX = touch.clientX - dragStart.x;
+                const deltaY = touch.clientY - dragStart.y;
+
+                // 更新地图偏移量
                 mapOffset.x += deltaX;
                 mapOffset.y += deltaY;
 
-                // 更新拖動起始點
-                dragStart.x = e.clientX;
-                dragStart.y = e.clientY;
+                // 更新拖动起始点
+                dragStart.x = touch.clientX;
+                dragStart.y = touch.clientY;
 
-                // 使用CSS变换移动地图容器，而不是重绘
+                // 更新地图位置
                 updateMapContainerPosition();
+            }
+        }, { passive: false }); // 使用 passive: false 允许阻止默认行为
+
+        // 触摸开始事件 - 处理地图拖拽
+        mapCanvas.addEventListener('touchstart', (e) => {
+            // 对于纵剖面模式，跳过处理
+            if (isProfileMode) {
+                return;
+            }
+
+            // 只有在没有激活任何绘图工具和测量工具时才启用拖移
+            if (isMapDrawing || isMapErasing || isPolylineMode) {
+                return;
+            }
+
+            // 判断是否为多指触摸（缩放手势）
+            if (e.touches.length === 2) {
+                // 记录初始的两指距离，用于后续缩放计算
+                const touch1 = e.touches[0];
+                const touch2 = e.touches[1];
+                pinchStartDistance = Math.hypot(
+                    touch1.clientX - touch2.clientX,
+                    touch1.clientY - touch2.clientY
+                );
+                initialScale = currentScale;
+                isPinching = true;
+                // 防止拖移状态同时激活
+                isDraggingMap = false;
+            } else if (e.touches.length === 1) {
+                // 单指触摸 - 拖拽模式
+                e.preventDefault();
+                isDraggingMap = true;
+                isPinching = false;
+
+                // 保存触摸开始位置
+                const touch = e.touches[0];
+                dragStart.x = touch.clientX;
+                dragStart.y = touch.clientY;
             }
         });
 
@@ -921,6 +998,24 @@
                 mapCanvas.style.cursor = 'grab';
             }
         });
+
+        // 触摸结束事件
+        document.addEventListener('touchend', (e) => {
+            // 重置触摸状态
+            isDraggingMap = false;
+            isPinching = false;
+
+            // 如果需要，重新生成地图以反映新的缩放级别
+            if (e.touches.length === 0) {
+                generate2DMap();
+            }
+        }, { passive: false });
+
+        // 处理触摸取消事件（例如当触摸移出屏幕）
+        document.addEventListener('touchcancel', () => {
+            isDraggingMap = false;
+            isPinching = false;
+        }, { passive: false });
 
         function updateMapContainerPosition() {
             const mapCanvas = document.getElementById('map-canvas');
@@ -1140,11 +1235,32 @@
         }, { passive: false });
 
         document.addEventListener('mousemove', (e) => {
-            if(isDragging){
-                protractorTool.style.left = `${e.clientX - offset.x}px`;
-                protractorTool.style.top = `${e.clientY - offset.y}px`;
+            // 如果正在拖拽地圖，處理拖拽邏輯
+            if (isDraggingMap) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                // 計算拖動的距離
+                const deltaX = e.clientX - dragStart.x;
+                const deltaY = e.clientY - dragStart.y;
+
+                // 更新地圖偏移量
+                mapOffset.x += deltaX;
+                mapOffset.y += deltaY;
+
+                // 更新拖動起始點
+                dragStart.x = e.clientX;
+                dragStart.y = e.clientY;
+
+                // 更新地圖位置
+                updateMapContainerPosition();
             }
-        });
+
+            // 保留原有代碼
+            if (isProfileHovering && profileHighlightPoint) {
+                clearTimeout(debounceTimer);
+            }
+        }, { passive: false }); // 添加 passive: false 選項
 
         document.addEventListener('touchmove', (e) => {
             if(isDragging){
@@ -1182,7 +1298,6 @@
 
         let isControlPointDragging = false; // 判斷是否正在拖拉控制點
         let dragStartPos = { x: 0, y: 0 }; // 拖拉開始的位置
-        let initialScale = 1;
 
         // 啟動控制點拖拉
         function startControlPointDrag(e) {
@@ -1368,19 +1483,13 @@
                 const rawX = clientX - rect.left;
                 const rawY = clientY - rect.top;
 
-                // 考虑地图的变换（CSS transform）
-                // 创建一个临时点用于计算
+                // 考虑地图的变换（CSS transform） - 轉換回原始畫布座標
                 const canvasCenterX = mapCanvas.width / 2;
                 const canvasCenterY = mapCanvas.height / 2;
-
-                // 将点击位置转换回原始（未变换）坐标空间
-                // 先移除CSS变换的影响
                 const withoutOffsetX = rawX - mapOffset.x;
                 const withoutOffsetY = rawY - mapOffset.y;
-
-                // 再考虑缩放（相对于中心点）
-                const transformedX = canvasCenterX + (withoutOffsetX - canvasCenterX) / currentScale;
-                const transformedY = canvasCenterY + (withoutOffsetY - canvasCenterY) / currentScale;
+                const transformedX = canvasCenterX + (withoutOffsetX - canvasCenterX) / currentScale; // *** 儲存這個 ***
+                const transformedY = canvasCenterY + (withoutOffsetY - canvasCenterY) / currentScale; // *** 儲存這個 ***
 
                 // 计算地图的基本参数
                 const mapSize = Math.min(mapCanvas.width, mapCanvas.height) * 0.8;
@@ -1400,16 +1509,13 @@
                     // 检查点是否在有效范围内
                     if (gridX >= 0 && gridX <= gridSegments && gridY >= 0 && gridY <= gridSegments) {
                         profilePoints.push({
-                            screenX: rawX,
+                            screenX: rawX, // 屏幕座標，可能較少用到
                             screenY: rawY,
-                            // 存储原始坐标（不含缩放信息）
-                            transformedX: transformedX,
-                            transformedY: transformedY,
-                            // 存储网格坐标（用于高度计算）
-                            gridX: gridX,
+                            transformedX: transformedX, // *** 確保儲存的是這個 ***
+                            transformedY: transformedY, // *** 確保儲存的是這個 ***
+                            gridX: gridX, // 網格座標用於計算高度
                             gridY: gridY,
-                            // 存储选择点时的缩放因子
-                            originalScale: currentScale
+                            // 不再需要 originalScale，因為我們始終使用 transformedX/Y
                         });
 
                         console.log("添加纵剖面点:", profilePoints.length);
@@ -1417,7 +1523,8 @@
                         // 如果已选两个点，则绘制纵剖面
                         if (profilePoints.length === 2) {
                             console.log("绘制纵剖面线和图表");
-                            drawProfileLine();
+                            // generate2DMap 會調用 drawProfileLine
+                            generate2DMap(); // 重新繪製地圖以包含線條
                             // 使用延时避免阻塞UI
                             setTimeout(() => {
                                 try {
@@ -1426,13 +1533,12 @@
                                 } catch (chartError) {
                                     console.error("创建剖面图表错误:", chartError);
                                     alert("创建剖面图表时发生错误，请重试");
-                                    // 重置剖面工具
                                     resetProfileTool();
                                 }
                             }, 100);
                         } else {
                             // 重绘地图以显示第一个点
-                            generate2DMap();
+                            generate2DMap(); // 重新繪製地圖以包含第一個點
                         }
                     } else {
                         console.warn("点击位置超出有效范围:", {gridX, gridY});
@@ -1441,7 +1547,6 @@
             } catch (error) {
                 console.error("处理纵剖面点击错误:", error);
                 alert("处理纵剖面点击时发生错误。请重试或重置工具。");
-                // 重置剖面工具，避免卡死
                 resetProfileTool();
             }
         }
@@ -1453,110 +1558,51 @@
 
                 const mapContext = mapCanvas.getContext('2d');
 
-                // 保存畫布狀態
-                mapContext.save();
+                // *** 注意：drawProfileLine 通常在 generate2DMap 內部被調用 ***
+                // *** generate2DMap 已經處理了 save/restore 和 transform ***
+                // *** 所以這裡不需要再次應用 transform，除非它是獨立調用的 ***
+                // *** 在當前結構下，假設 generate2DMap 會調用它，所以移除獨立的 transform ***
 
-                // 應用與地圖相同的變換
-                mapContext.translate(mapOffset.x, mapOffset.y);
-                mapContext.translate(mapCanvas.width / 2, mapCanvas.height / 2);
-                mapContext.scale(currentScale, currentScale);
-                mapContext.translate(-mapCanvas.width / 2, -mapCanvas.height / 2);
+                // mapContext.save(); // 移除 - generate2DMap 會處理
+                // mapContext.translate(mapOffset.x, mapOffset.y); // 移除
+                // ... 其他 transform // 移除
 
-                // 繪製連接線
+                // 繪製連接線 - 使用 transformedX/Y
                 mapContext.beginPath();
-
-                // 考慮原始缩放因子和当前缩放因子的差异
-                // 计算每个点在当前缩放级别下的位置
-                const canvasCenterX = mapCanvas.width / 2;
-                const canvasCenterY = mapCanvas.height / 2;
-
-                // 调整第一个点
-                const point1 = profilePoints[0];
-                // 从中心点计算相对位置
-                const relX1 = point1.transformedX - canvasCenterX;
-                const relY1 = point1.transformedY - canvasCenterY;
-                // 调整为当前缩放级别
-                const adjustedX1 = canvasCenterX + (relX1 * point1.originalScale / currentScale);
-                const adjustedY1 = canvasCenterY + (relY1 * point1.originalScale / currentScale);
-
-                // 调整第二个点
-                const point2 = profilePoints[1];
-                const relX2 = point2.transformedX - canvasCenterX;
-                const relY2 = point2.transformedY - canvasCenterY;
-                const adjustedX2 = canvasCenterX + (relX2 * point2.originalScale / currentScale);
-                const adjustedY2 = canvasCenterY + (relY2 * point2.originalScale / currentScale);
-
-                // 使用调整后的坐标
-                mapContext.moveTo(adjustedX1, adjustedY1);
-                mapContext.lineTo(adjustedX2, adjustedY2);
+                mapContext.moveTo(profilePoints[0].transformedX, profilePoints[0].transformedY);
+                mapContext.lineTo(profilePoints[1].transformedX, profilePoints[1].transformedY);
                 mapContext.strokeStyle = '#ff0000';
                 mapContext.lineWidth = 3 / currentScale; // 考慮縮放調整線寬
                 mapContext.stroke();
 
-                // 繪製點（使用调整后的坐标）
+                // 繪製點 - 使用 transformedX/Y
                 for (let i = 0; i < profilePoints.length; i++) {
                     const point = profilePoints[i];
-                    const relX = point.transformedX - canvasCenterX;
-                    const relY = point.transformedY - canvasCenterY;
-                    const adjustedX = canvasCenterX + (relX * point.originalScale / currentScale);
-                    const adjustedY = canvasCenterY + (relY * point.originalScale / currentScale);
-
                     mapContext.beginPath();
-                    mapContext.arc(adjustedX, adjustedY, 6 / currentScale, 0, 2 * Math.PI);
+                    mapContext.arc(point.transformedX, point.transformedY, 6 / currentScale, 0, 2 * Math.PI);
                     mapContext.fillStyle = i === 0 ? '#00ff00' : '#ff0000';
                     mapContext.fill();
                     mapContext.strokeStyle = '#ffffff';
                     mapContext.lineWidth = 2 / currentScale;
                     mapContext.stroke();
 
-                    // 更新点的临时位置以供其他函数使用
-                    point.adjustedX = adjustedX;
-                    point.adjustedY = adjustedY;
+                    // *** 不再需要儲存 adjustedX/Y ***
+                    // delete point.adjustedX;
+                    // delete point.adjustedY;
                 }
 
-                // 繪製高亮點（如果存在）
+                // *** 高亮點的繪製現在由 drawHighlightPointOnly 獨立處理，這裡不再繪製 ***
+                /*
                 if (isProfileHovering && profileHighlightPoint) {
-                    mapContext.beginPath();
-
-                    // 计算高亮点相对于线段的位置（仍保持相同的相对位置）
-                    const p1 = profilePoints[0];
-                    const p2 = profilePoints[1];
-
-                    // 计算高亮点在调整后的线段上的相应位置
-                    let highlightX, highlightY;
-
-                    if (profileHighlightPoint.t !== undefined) {
-                        // 如果已经保存了插值因子，直接使用
-                        const t = profileHighlightPoint.t;
-                        highlightX = adjustedX1 + (adjustedX2 - adjustedX1) * t;
-                        highlightY = adjustedY1 + (adjustedY2 - adjustedY1) * t;
-                    } else {
-                        // 否则使用原始高亮点
-                        highlightX = profileHighlightPoint.x;
-                        highlightY = profileHighlightPoint.y;
-                    }
-
-                    mapContext.arc(
-                        highlightX,
-                        highlightY,
-                        8 / currentScale, // 稍大一點更醒目
-                        0,
-                        2 * Math.PI
-                    );
-                    mapContext.fillStyle = '#ffff00'; // 黃色
-                    mapContext.strokeStyle = '#000000'; // 黑色邊框
-                    mapContext.lineWidth = 2 / currentScale;
-                    mapContext.fill();
-                    mapContext.stroke();
+                    // ... (移除高亮點繪製邏輯)
                 }
+                */
 
-                // 恢復畫布狀態
-                mapContext.restore();
+                // mapContext.restore(); // 移除 - generate2DMap 會處理
             } catch (error) {
                 console.error("繪製縱剖面線錯誤:", error);
             }
-            // 添加懸停效果初始化
-            addProfileHoverEffect();
+            // addProfileHoverEffect(); // 這個應該在縱剖面面板顯示時調用一次即可
         }
 
         function createProfileChart() {
@@ -1895,11 +1941,18 @@
             // 确保面板可拖动
             makeProfilePanelDraggable();
 
+             // *** 添加懸停效果監聽器 ***
+             addProfileHoverEffect(); // 確保在這裡調用
+
             // 确保 canvas 在显示后调整大小
             setTimeout(() => {
-                profileCanvas.width = profileCanvas.offsetWidth || 800;
-                profileCanvas.height = profileCanvas.offsetHeight || 200;
-                createProfileChart(); // 在调整大小后重新绘制
+                if (profileCanvas) { // 添加檢查
+                    profileCanvas.width = profileCanvas.offsetWidth || 800;
+                    profileCanvas.height = profileCanvas.offsetHeight || 200;
+                    createProfileChart(); // 在调整大小后重新绘制
+                } else {
+                    console.error("Profile canvas not found in showProfilePanel timeout");
+                }
             }, 100);
         }
 
@@ -2317,80 +2370,63 @@
 
         // 在地圖上更新高亮點位置
         function updateHighlightPoint(relativePosition) {
-            // 基於相對位置計算兩點之間的位置
+            if (profilePoints.length !== 2) return;
+
             const p1 = profilePoints[0];
             const p2 = profilePoints[1];
 
-            // 保存插值因子，这是高亮点在线段上的相对位置
+            // relativePosition 就是插值因子 t (0 到 1)
             const t = relativePosition;
 
-            // 使用adjustedX和adjustedY（已在drawProfileLine函数中计算）
-            // 这些是考虑了缩放因子的调整坐标
-            const x1 = p1.adjustedX !== undefined ? p1.adjustedX : p1.transformedX;
-            const y1 = p1.adjustedY !== undefined ? p1.adjustedY : p1.transformedY;
-            const x2 = p2.adjustedX !== undefined ? p2.adjustedX : p2.transformedX;
-            const y2 = p2.adjustedY !== undefined ? p2.adjustedY : p2.transformedY;
+            // 使用原始的 transformedX/Y 進行線性插值，計算未縮放/未偏移的座標
+            const highlightTransformedX = p1.transformedX + (p2.transformedX - p1.transformedX) * t;
+            const highlightTransformedY = p1.transformedY + (p2.transformedY - p1.transformedY) * t;
 
-            // 计算线性插值位置
-            const highlightX = x1 + (x2 - x1) * t;
-            const highlightY = y1 + (y2 - y1) * t;
-
-            // 保存高亮點位置和插值因子
+            // 保存高亮點的原始變換後座標和插值因子 t
             profileHighlightPoint = {
-                x: highlightX,
-                y: highlightY,
-                t: t  // 保存插值因子以便在缩放变化时重新计算位置
+                transformedX: highlightTransformedX, // 存儲未縮放的座標
+                transformedY: highlightTransformedY,
+                t: t // 存儲插值因子，可能有用
             };
 
-            // 使用覆蓋層繪製高亮點
+            // 使用覆蓋層繪製高亮點 (觸發 redrawHighlightPointOnly)
             drawHighlightPointOnly();
         }
 
+        // 修改 drawHighlightPointOnly 函數
         function drawHighlightPointOnly() {
-            if (!isProfileMode || !isProfileHovering || !profileHighlightPoint || !highlightContext) return;
+            // 檢查條件
+            if (!isMapMode || !isProfileMode || !isProfileHovering || !profileHighlightPoint || !highlightContext) {
+                 // 如果條件不滿足，確保清除之前的繪製
+                 if (highlightContext) {
+                     highlightContext.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+                 }
+                 return;
+            }
 
-            // 清除整個高亮層
+            // 清除整個高亮層畫布
             highlightContext.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
 
             // 保存當前畫布狀態
             highlightContext.save();
 
-            // 應用與地圖相同的變換
-            // 這裡的關鍵是使用與drawProfileLine中相同的變換
+            // *** 關鍵：應用與 mapCanvas 完全相同的變換 ***
             highlightContext.translate(mapOffset.x, mapOffset.y);
             highlightContext.translate(highlightCanvas.width / 2, highlightCanvas.height / 2);
             highlightContext.scale(currentScale, currentScale);
             highlightContext.translate(-highlightCanvas.width / 2, -highlightCanvas.height / 2);
 
-            // 使用插值因子t来确定高亮点在线段上的位置
-            let x, y;
+            // 使用存儲在 profileHighlightPoint 中的未縮放/未偏移座標
+            const x = profileHighlightPoint.transformedX;
+            const y = profileHighlightPoint.transformedY;
 
-            if (profileHighlightPoint.t !== undefined && profilePoints.length === 2) {
-                const t = profileHighlightPoint.t;
-
-                // 使用adjustedX和adjustedY（在drawProfileLine中计算好的坐标）
-                const p1 = profilePoints[0];
-                const p2 = profilePoints[1];
-
-                const x1 = p1.adjustedX !== undefined ? p1.adjustedX : p1.transformedX;
-                const y1 = p1.adjustedY !== undefined ? p1.adjustedY : p1.transformedY;
-                const x2 = p2.adjustedX !== undefined ? p2.adjustedX : p2.transformedX;
-                const y2 = p2.adjustedY !== undefined ? p2.adjustedY : p2.transformedY;
-
-                // 线性插值计算高亮点位置
-                x = x1 + (x2 - x1) * t;
-                y = y1 + (y2 - y1) * t;
-            } else {
-                // 如果没有插值因子，直接使用保存的坐标
-                x = profileHighlightPoint.x;
-                y = profileHighlightPoint.y;
-            }
-
-            // 绘制黄色高亮点
+            // 繪製黃色高亮點
             highlightContext.beginPath();
+            // 根據 currentScale 調整圓點視覺大小
             highlightContext.arc(x, y, 8 / currentScale, 0, 2 * Math.PI);
             highlightContext.fillStyle = '#ffff00'; // 黃色
             highlightContext.strokeStyle = '#000000'; // 黑色邊框
+             // 根據 currentScale 調整線條視覺寬度
             highlightContext.lineWidth = 2 / currentScale;
             highlightContext.fill();
             highlightContext.stroke();
@@ -4325,6 +4361,7 @@
 
                 // 保存畫布狀態並應用變換
                 mapContext.save();
+                // *** 應用變換 ***
                 mapContext.translate(mapOffset.x, mapOffset.y);
                 mapContext.translate(mapCanvas.width / 2, mapCanvas.height / 2);
                 mapContext.scale(currentScale, currentScale);
@@ -4371,26 +4408,29 @@
 
                 // 繪製連線和剖面點
                 if (isPolylineMode) {
-                    drawPolyline(mapContext, offsetX, offsetY);
+                    drawPolyline(mapContext, offsetX, offsetY); // 確保傳遞正確參數
                 }
-
                 if (isProfileMode && profilePoints.length > 0) {
-                    if (profilePoints.length === 2) {
-                        // 只调用drawProfileLine，因为它已经包含了绘制点的逻辑
-                        drawProfileLine();
-                    } else if (profilePoints.length === 1) {
-                        // 只绘制第一个点
-                        drawProfilePoints(mapContext);
-                    }
+                     // *** 調用 drawProfileLine 來繪製線和端點 ***
+                     drawProfileLine(); // generate2DMap 內部調用，已在正確的 transform 下
                 }
 
-                // 恢復畫布狀態
-                mapContext.restore();
+                 mapContext.restore(); // 恢復畫布狀態
 
-                // 更新繪圖畫布位置
-                if (mapDrawingCanvas) {
-                    mapDrawingCanvas.style.transform = `translate(${mapOffset.x}px, ${mapOffset.y}px)`;
-                }
+                 // 更新繪圖畫布位置
+                 if (mapDrawingCanvas) {
+                     mapDrawingCanvas.style.transform = `translate(${mapOffset.x}px, ${mapOffset.y}px)`;
+                 }
+                 // 更新高亮畫布位置
+                 if (highlightCanvas) {
+                     highlightCanvas.style.transform = `translate(${mapOffset.x}px, ${mapOffset.y}px)`;
+                 }
+
+                 // 如果正在懸停，需要強制重繪高亮點，因為地圖變換已更新
+                 if (isProfileHovering && profileHighlightPoint) {
+                    drawHighlightPointOnly();
+                 }
+
 
                 console.timeEnd('generate2DMap');
             } catch (error) {
