@@ -897,12 +897,13 @@
         });
 
         // 触摸移动事件 - 处理拖拽和缩放
+        // 觸摸移動事件 - 處理拖拽和縮放
         document.addEventListener('touchmove', (e) => {
             if (isPinching && e.touches.length === 2) {
-                // 处理双指缩放
+                // 處理雙指縮放
                 e.preventDefault();
 
-                // 计算当前两指距离
+                // 計算當前兩指距離
                 const touch1 = e.touches[0];
                 const touch2 = e.touches[1];
                 const currentDistance = Math.hypot(
@@ -910,40 +911,46 @@
                     touch1.clientY - touch2.clientY
                 );
 
-                // 计算缩放比例变化
+                // 計算縮放比例變化
                 const scaleFactor = currentDistance / pinchStartDistance;
 
-                // 更新地图缩放级别
-                const oldScale = currentScale;
-                currentScale = Math.max(0.5, Math.min(initialScale * scaleFactor, 3));
+                // 使用 requestAnimationFrame 優化更新
+                requestAnimationFrame(() => {
+                    // 更新地圖縮放級別
+                    const oldScale = currentScale;
+                    currentScale = Math.max(0.5, Math.min(initialScale * scaleFactor, 3));
 
-                // 调整偏移量以保持视图中心
-                mapOffset.x = mapOffset.x * (currentScale / oldScale);
-                mapOffset.y = mapOffset.y * (currentScale / oldScale);
+                    // 調整偏移量以保持視圖中心
+                    mapOffset.x = mapOffset.x * (currentScale / oldScale);
+                    mapOffset.y = mapOffset.y * (currentScale / oldScale);
 
-                // 更新地图
-                updateMapContainerPosition();
+                    // 更新地圖 - 只更新CSS transform，不重繪地圖
+                    updateMapContainerPosition();
+                });
             }
             else if (isDraggingMap && e.touches.length === 1) {
-                // 处理单指拖拽
+                // 處理單指拖拽
                 e.preventDefault();
 
                 const touch = e.touches[0];
                 const deltaX = touch.clientX - dragStart.x;
                 const deltaY = touch.clientY - dragStart.y;
 
-                // 更新地图偏移量
-                mapOffset.x += deltaX;
-                mapOffset.y += deltaY;
+                // 使用 requestAnimationFrame 優化更新
+                requestAnimationFrame(() => {
+                    // 更新地圖偏移量
+                    mapOffset.x += deltaX;
+                    mapOffset.y += deltaY;
 
-                // 更新拖动起始点
-                dragStart.x = touch.clientX;
-                dragStart.y = touch.clientY;
+                    // 更新拖動起始點
+                    dragStart.x = touch.clientX;
+                    dragStart.y = touch.clientY;
 
-                // 更新地图位置
-                updateMapContainerPosition();
+                    // 更新地圖 - 只更新CSS transform，不重繪地圖
+                    updateMapContainerPosition();
+                });
             }
-        }, { passive: false }); // 使用 passive: false 允许阻止默认行为
+        }, { passive: false });
 
         // 触摸开始事件 - 处理地图拖拽
         mapCanvas.addEventListener('touchstart', (e) => {
@@ -999,15 +1006,25 @@
             }
         });
 
-        // 触摸结束事件
+        // 觸摸結束事件
         document.addEventListener('touchend', (e) => {
-            // 重置触摸状态
+            // 重置觸摸狀態
             isDraggingMap = false;
             isPinching = false;
 
-            // 如果需要，重新生成地图以反映新的缩放级别
+            // 如果需要重新生成地圖以反映新的縮放級別，延遲執行以確保順暢
             if (e.touches.length === 0) {
-                generate2DMap();
+                // 移除硬體加速提示
+                const mapCanvas = document.getElementById('map-canvas');
+                const mapDrawingCanvas = document.getElementById('map-drawing-canvas');
+                if (mapCanvas) mapCanvas.style.willChange = 'auto';
+                if (mapDrawingCanvas) mapDrawingCanvas.style.willChange = 'auto';
+                if (highlightCanvas) highlightCanvas.style.willChange = 'auto';
+
+                // 延遲重繪地圖，確保UI交互已經結束
+                setTimeout(() => {
+                    generate2DMap();
+                }, 100);
             }
         }, { passive: false });
 
@@ -1021,19 +1038,26 @@
             const mapCanvas = document.getElementById('map-canvas');
             const mapDrawingCanvas = document.getElementById('map-drawing-canvas');
 
-            // 使用CSS变换移动地图
+            // 使用 transform 而不是直接修改 style.left/top
+            // transform 可以啟用硬體加速
+            const transform = `translate3d(${mapOffset.x}px, ${mapOffset.y}px, 0) scale(${currentScale})`;
+
+            // 使用同一個 transform 變換值以確保效率
             if (mapCanvas) {
-                mapCanvas.style.transform = `translate(${mapOffset.x}px, ${mapOffset.y}px)`;
+                mapCanvas.style.transform = transform;
+                mapCanvas.style.willChange = 'transform'; // 提示瀏覽器提前準備硬體加速
             }
 
-            // 同步移动绘图画布，使笔迹跟随地图
+            // 同步移動繪圖畫布
             if (mapDrawingCanvas) {
-                mapDrawingCanvas.style.transform = `translate(${mapOffset.x}px, ${mapOffset.y}px)`;
+                mapDrawingCanvas.style.transform = transform;
+                mapDrawingCanvas.style.willChange = 'transform';
             }
 
             // 同步移動高亮層畫布
             if (highlightCanvas) {
-                highlightCanvas.style.transform = `translate(${mapOffset.x}px, ${mapOffset.y}px)`;
+                highlightCanvas.style.transform = transform;
+                highlightCanvas.style.willChange = 'transform';
             }
         }
 
@@ -3948,6 +3972,7 @@
                         mapCanvas.style.top = '0';
                         mapCanvas.style.left = '0';
                         mapCanvas.style.cursor = 'grab';
+                        mapCanvas.style.transformOrigin = '0 0'; // 添加這行確保變換原點正確
                     }
 
                     // 确保绘图画布不会拦截拖动事件
@@ -3957,6 +3982,7 @@
                         mapDrawingCanvas.style.top = '0';
                         mapDrawingCanvas.style.left = '0';
                         mapDrawingCanvas.style.zIndex = '2';
+                        mapDrawingCanvas.style.transformOrigin = '0 0';
                         mapDrawingCanvas.style.pointerEvents = 'none'; // 初始时禁用鼠标事件
                     }
 
@@ -4040,6 +4066,7 @@
                             if (highlightCanvas) {
                                 highlightContext.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
                                 highlightCanvas.style.display = 'block';
+                                highlightCanvas.style.transformOrigin = '0 0';
                             }
                         } else {
                             console.log('返回3D模式');
