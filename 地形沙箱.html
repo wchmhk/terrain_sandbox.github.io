@@ -811,7 +811,10 @@
         let initialOffset = { x: 0, y: 0 }; // 拖拽或縮放開始時的初始偏移
         let touchStartX = 0, touchStartY = 0; // 第一個觸控點的起始位置
         let touch2StartX = 0, touch2StartY = 0; // 第二個觸控點的起始位置
-
+        let pinchStartCenter = { x: 0, y: 0 }; // 記錄縮放開始的中心點
+        let scalingChanged = false; // 標記縮放是否已更改但未重繪
+        let initialDragOffset = { x: 0, y: 0 }; // 記錄拖拽開始時的偏移量
+        let needsRedraw = false; // 標記是否需要重繪地圖
 
         // 初始化入口函數，確保DOM完全載入後才執行
         window.addEventListener('load', init);
@@ -873,14 +876,13 @@
         // 地圖拖動處理
         // 修改地图画布的mousedown事件处理器
         mapCanvas.addEventListener('mousedown', (e) => {
-            // 对于纵剖面模式，改为只通过click事件处理，不在mousedown时处理
+            // 對於縱剖面模式，改為只通過click事件處理，不在mousedown時處理
             if (isProfileMode) {
-                // 仅更新鼠标样式，实际点击处理由click事件完成
                 mapCanvas.style.cursor = 'crosshair';
                 return;
             }
 
-            // 只有在没有激活任何绘图工具和测量工具时才启用拖移
+            // 只有在沒有激活任何繪圖工具和測量工具時才啟用拖移
             if (isMapDrawing || isMapErasing || isPolylineMode) {
                 return;
             }
@@ -892,22 +894,31 @@
             // 明確設置拖移狀態
             isDraggingMap = true;
 
-            // 保存點擊時的初始位置
+            // 保存點擊時的初始位置和當前偏移
             dragStart.x = e.clientX;
             dragStart.y = e.clientY;
-            mapCanvas.style.cursor = 'grabbing';
+            initialDragOffset = {
+                x: mapOffset.x,
+                y: mapOffset.y
+            };
 
-            console.log("開始拖移地圖", isDraggingMap);
+            mapCanvas.style.cursor = 'grabbing';
         });
 
         // 觸摸移動事件 - 處理拖拽和縮放
         document.addEventListener('touchmove', (e) => {
-            e.preventDefault(); // 先阻止默認行為
+            e.preventDefault();
 
             if (isPinching && e.touches.length === 2) {
                 // 雙指縮放處理
                 const touch1 = e.touches[0];
                 const touch2 = e.touches[1];
+
+                // 計算縮放中心點
+                const currentPinchCenter = {
+                    x: (touch1.clientX + touch2.clientX) / 2,
+                    y: (touch1.clientY + touch2.clientY) / 2
+                };
 
                 // 計算當前兩指距離
                 const currentDistance = Math.hypot(
@@ -915,33 +926,38 @@
                     touch1.clientY - touch2.clientY
                 );
 
-                // 計算縮放比例 - 更直接的計算方式
-                const scaleChange = currentDistance / pinchStartDistance;
-                currentScale = initialScale * scaleChange;
+                // 記錄原始縮放值
+                const oldScale = currentScale;
+
+                // 計算新縮放值
+                currentScale = initialScale * (currentDistance / pinchStartDistance);
 
                 // 限制縮放範圍
                 currentScale = Math.max(0.5, Math.min(currentScale, 3));
 
-                // 計算縮放中心點
-                const pinchCenterX = (touch1.clientX + touch2.clientX) / 2;
-                const pinchCenterY = (touch1.clientY + touch2.clientY) / 2;
+                // 關鍵改進：計算新的偏移量，保持縮放中心點對應的地圖位置不變
+                mapOffset.x = currentPinchCenter.x - (currentPinchCenter.x - initialOffset.x) * (currentScale / oldScale);
+                mapOffset.y = currentPinchCenter.y - (currentPinchCenter.y - initialOffset.y) * (currentScale / oldScale);
 
-                // 計算縮放後的新偏移，保持縮放中心點不變
-                mapOffset.x = pinchCenterX - (pinchCenterX - initialOffset.x) * scaleChange;
-                mapOffset.y = pinchCenterY - (pinchCenterY - initialOffset.y) * scaleChange;
-
-                // 立即更新地圖位置
+                // 更新地圖位置
                 updateMapContainerPosition();
+
+                // 由於效能考量，設置標記為需要重繪，但在觸控結束時才重繪
+                needsRedraw = true;
             }
             else if (isDraggingMap && e.touches.length === 1) {
-                // 單指拖拽處理 - 直接一對一映射移動
+                // 單指拖拽處理
                 const touch = e.touches[0];
 
-                // 更新地圖偏移量 - 不使用任何減速因子，確保一對一跟隨
-                mapOffset.x = initialOffset.x + (touch.clientX - touchStartX);
-                mapOffset.y = initialOffset.y + (touch.clientY - touchStartY);
+                // 計算相對於初始觸控點的移動距離
+                const deltaX = touch.clientX - touchStartX;
+                const deltaY = touch.clientY - touchStartY;
 
-                // 立即更新地圖位置
+                // 使用絕對偏移量計算新位置，而不是增量式
+                mapOffset.x = initialOffset.x + deltaX;
+                mapOffset.y = initialOffset.y + deltaY;
+
+                // 更新位置
                 updateMapContainerPosition();
             }
         }, { passive: false });
@@ -956,7 +972,7 @@
             // 只有在沒有激活任何繪圖工具和測量工具時才啟用交互
             if (isMapDrawing || isMapErasing || isPolylineMode) return;
 
-            // 保存初始狀態 - 這很重要
+            // 保存初始狀態
             initialOffset = {
                 x: mapOffset.x,
                 y: mapOffset.y
@@ -973,6 +989,12 @@
                 touch2StartX = touch2.clientX;
                 touch2StartY = touch2.clientY;
 
+                // 記錄縮放中心點 - 添加這個
+                pinchStartCenter = {
+                    x: (touch1.clientX + touch2.clientX) / 2,
+                    y: (touch1.clientY + touch2.clientY) / 2
+                };
+
                 pinchStartDistance = Math.hypot(
                     touch1.clientX - touch2.clientX,
                     touch1.clientY - touch2.clientY
@@ -981,6 +1003,7 @@
                 initialScale = currentScale;
                 isPinching = true;
                 isDraggingMap = false;
+                scalingChanged = false; // 重置縮放變更標記
             }
             else if (e.touches.length === 1) {
                 // 單指觸摸 - 拖拽模式
@@ -1011,24 +1034,16 @@
 
         // 觸摸結束事件
         document.addEventListener('touchend', (e) => {
-            // 重置觸摸狀態
-            if (isDraggingMap || isPinching) {
-                // 只有在地圖實際被操作後才延遲重繪
-                isDraggingMap = false;
-                isPinching = false;
-
-                // 如果沒有觸摸點了，需要重新生成地圖
+            if (needsRedraw) {
+                // 只有在手指全部離開時才重繪
                 if (e.touches.length === 0) {
-                    // 給CSS變換時間完成，然後再重繪
-                    setTimeout(() => {
-                        generate2DMap();
-                    }, 50); // 較短的延遲，提高響應性
+                    generate2DMap();
+                    needsRedraw = false;
                 }
-            } else {
-                // 如果沒有實際拖拽，直接重置狀態
-                isDraggingMap = false;
-                isPinching = false;
             }
+
+            isDraggingMap = false;
+            isPinching = false;
         }, { passive: true });
 
         // 处理触摸取消事件（例如当触摸移出屏幕）
@@ -1041,15 +1056,13 @@
             const mapCanvas = document.getElementById('map-canvas');
             const mapDrawingCanvas = document.getElementById('map-drawing-canvas');
 
-            // 直接使用 matrix 變換方式 - 可同時精確控制縮放和平移
-            // matrix(a, b, c, d, tx, ty) 相當於：
-            // a,b,c,d 控制縮放和傾斜，tx,ty 控制平移
+            // 使用矩陣變換確保精確控制
             const transform = `matrix(${currentScale}, 0, 0, ${currentScale}, ${mapOffset.x}, ${mapOffset.y})`;
 
-            // 應用相同的變換到所有相關畫布
+            // 應用到所有相關畫布
             if (mapCanvas) {
                 mapCanvas.style.transform = transform;
-                mapCanvas.style.transformOrigin = '0 0'; // 確保從左上角開始變換
+                mapCanvas.style.transformOrigin = '0 0';
             }
 
             if (mapDrawingCanvas) {
@@ -1270,13 +1283,9 @@
                 const deltaX = e.clientX - dragStart.x;
                 const deltaY = e.clientY - dragStart.y;
 
-                // 更新地圖偏移量
-                mapOffset.x += deltaX;
-                mapOffset.y += deltaY;
-
-                // 更新拖動起始點
-                dragStart.x = e.clientX;
-                dragStart.y = e.clientY;
+                // 使用絕對偏移量，基於初始點計算
+                mapOffset.x = initialDragOffset.x + deltaX;
+                mapOffset.y = initialDragOffset.y + deltaY;
 
                 // 更新地圖位置
                 updateMapContainerPosition();
@@ -3928,43 +3937,111 @@
                 // 改進放大和縮小按鈕功能
                 if (zoomInBtn) {
                   zoomInBtn.addEventListener('click', () => {
-                      // 保存原始位置
-                      const oldScale = currentScale;
-                      // 放大 20%
-                      currentScale *= 1.2;
-                      // 調整偏移量，保持視圖中心
-                      mapOffset.x = mapOffset.x * (currentScale / oldScale);
-                      mapOffset.y = mapOffset.y * (currentScale / oldScale);
+                      // 獲取畫面中心點
+                      const centerX = window.innerWidth / 2;
+                      const centerY = window.innerHeight / 2;
 
-                      // 重新生成地图 (已包含纵剖面线绘制逻辑)
+                      // 記錄舊的縮放比例
+                      const oldScale = currentScale;
+                      // 放大 10%
+                      currentScale = oldScale * 1.1;
+
+                      // 使用與滾輪縮放相同的公式
+                      const scaleFactor = currentScale / oldScale;
+
+                      // 計算新的偏移量，保持中心點不變
+                      mapOffset.x = centerX * (1 - scaleFactor) + mapOffset.x * scaleFactor;
+                      mapOffset.y = centerY * (1 - scaleFactor) + mapOffset.y * scaleFactor;
+
+                      // 更新位置
+                      updateMapContainerPosition();
+                      // 立即重新生成地圖
                       generate2DMap();
                   });
                 }
 
                 if (zoomOutBtn) {
                   zoomOutBtn.addEventListener('click', () => {
-                      // 保存原始位置
-                      const oldScale = currentScale;
-                      // 縮小 20%
-                      currentScale *= 0.8;
-                      // 調整偏移量，保持視圖中心
-                      mapOffset.x = mapOffset.x * (currentScale / oldScale);
-                      mapOffset.y = mapOffset.y * (currentScale / oldScale);
+                      // 獲取畫面中心點
+                      const centerX = window.innerWidth / 2;
+                      const centerY = window.innerHeight / 2;
 
-                      // 重新生成地图 (已包含纵剖面线绘制逻辑)
+                      // 記錄舊的縮放比例
+                      const oldScale = currentScale;
+                      // 縮小 10%
+                      currentScale = oldScale * 0.9;
+
+                      // 使用與滾輪縮放相同的公式
+                      const scaleFactor = currentScale / oldScale;
+
+                      // 計算新的偏移量，保持中心點不變
+                      mapOffset.x = centerX * (1 - scaleFactor) + mapOffset.x * scaleFactor;
+                      mapOffset.y = centerY * (1 - scaleFactor) + mapOffset.y * scaleFactor;
+
+                      // 更新位置
+                      updateMapContainerPosition();
+                      // 立即重新生成地圖
                       generate2DMap();
                   });
+                }
 
+                if (mapContainer) {
+                  mapContainer.addEventListener('wheel', (e) => {
+                      e.preventDefault();
 
-                    // 确保地图容器可见且正确设置
-                    if (mapContainer) {
-                        mapContainer.style.position = 'absolute';
-                        mapContainer.style.top = '0';
-                        mapContainer.style.left = '0';
-                        mapContainer.style.width = '100%';
-                        mapContainer.style.height = '100%';
-                        mapContainer.style.zIndex = '2';
-                    }
+                      // 確認是縮放操作而非普通滾動
+                      const isZoomGesture = e.ctrlKey || Math.abs(e.deltaY) > Math.abs(e.deltaX) * 3;
+                      if (!isZoomGesture) return;
+
+                      // 直接獲取滑鼠在視窗中的位置
+                      const mouseX = e.clientX;
+                      const mouseY = e.clientY;
+
+                      // 記錄舊的縮放值
+                      const oldScale = currentScale;
+
+                      // 調整縮放速度 (更溫和的縮放)
+                      const zoomSpeed = 0.03; // 3%的縮放變化率
+
+                      // 計算新的縮放比例
+                      if (e.deltaY > 0) {
+                          // 縮小
+                          currentScale = oldScale * (1 - zoomSpeed);
+                      } else {
+                          // 放大
+                          currentScale = oldScale * (1 + zoomSpeed);
+                      }
+
+                      // 限制縮放範圍
+                      currentScale = Math.max(0.5, Math.min(currentScale, 3));
+
+                      // ----------------- 關鍵改進 ---------------------
+                      // 直接公式: 我們想要保持滑鼠下的點在縮放前後不變
+                      // 如果 P 是滑鼠指向的原始點，那麼:
+                      // P_screen = P * oldScale + oldOffset
+                      // 縮放後，我們希望:
+                      // P_screen = P * newScale + newOffset
+                      // 因此:
+                      // newOffset = P_screen - P * newScale
+                      // 但 P = (P_screen - oldOffset) / oldScale
+                      // 代入:
+                      // newOffset = P_screen - ((P_screen - oldOffset) / oldScale) * newScale
+                      // 化簡:
+                      // newOffset = P_screen * (1 - newScale/oldScale) + oldOffset * (newScale/oldScale)
+
+                      const scaleFactor = currentScale / oldScale;
+
+                      // 計算新的偏移量，核心公式
+                      mapOffset.x = mouseX * (1 - scaleFactor) + mapOffset.x * scaleFactor;
+                      mapOffset.y = mouseY * (1 - scaleFactor) + mapOffset.y * scaleFactor;
+
+                      // 立即更新位置
+                      updateMapContainerPosition();
+
+                      // 重新生成地圖以確保高質量顯示
+                      generate2DMap();
+                  });
+                }
 
                     // 确保地图画布可拖动
                     if (mapCanvas) {
@@ -3985,37 +4062,6 @@
                         mapDrawingCanvas.style.transformOrigin = '0 0';
                         mapDrawingCanvas.style.pointerEvents = 'none'; // 初始时禁用鼠标事件
                     }
-
-                }
-
-                // 滚轮缩放逻辑修改
-                if (mapContainer) {
-                  mapContainer.addEventListener('wheel', (e) => {
-                      e.preventDefault();
-
-                      // 保存原始位置
-                      const oldScale = currentScale;
-
-                      // 調整縮放比例
-                      if (e.deltaY > 0) {
-                          // 向下滾動，縮小
-                          currentScale *= 0.9;
-                      } else {
-                          // 向上滾動，放大
-                          currentScale *= 1.1;
-                      }
-
-                      // 限制縮放範圍
-                      currentScale = Math.max(0.5, Math.min(currentScale, 3));
-
-                      // 調整偏移量以保持視圖中心
-                      mapOffset.x = mapOffset.x * (currentScale / oldScale);
-                      mapOffset.y = mapOffset.y * (currentScale / oldScale);
-
-                      // 重新生成地图 (已包含纵剖面线绘制逻辑)
-                      generate2DMap();
-                  });
-                }
 
                 if (!mapCanvas || !mapContainer) {
                     console.error('找不到地圖容器或畫布元素');
