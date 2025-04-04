@@ -808,6 +808,10 @@
         let isPinching = false;
         let pinchStartDistance = 0;
         let initialScale = 1;
+        let initialOffset = { x: 0, y: 0 }; // 拖拽或縮放開始時的初始偏移
+        let touchStartX = 0, touchStartY = 0; // 第一個觸控點的起始位置
+        let touch2StartX = 0, touch2StartY = 0; // 第二個觸控點的起始位置
+
 
         // 初始化入口函數，確保DOM完全載入後才執行
         window.addEventListener('load', init);
@@ -896,121 +900,98 @@
             console.log("開始拖移地圖", isDraggingMap);
         });
 
-        // 触摸移动事件 - 处理拖拽和缩放
         // 觸摸移動事件 - 處理拖拽和縮放
         document.addEventListener('touchmove', (e) => {
-          if (isPinching && e.touches.length === 2) {
-              // 處理雙指縮放
-              e.preventDefault();
+            e.preventDefault(); // 先阻止默認行為
 
-              // 計算當前兩指距離
-              const touch1 = e.touches[0];
-              const touch2 = e.touches[1];
-              const currentDistance = Math.hypot(
-                  touch1.clientX - touch2.clientX,
-                  touch1.clientY - touch2.clientY
-              );
-
-              // 計算縮放比例變化，但用係數調整使其更貼近實際感知
-              const dampingFactor = 0.7; // 減小縮放靈敏度
-              const rawScaleFactor = currentDistance / pinchStartDistance;
-              const scaleFactor = 1 + ((rawScaleFactor - 1) * dampingFactor);
-
-              // 更新地圖縮放級別
-              const oldScale = currentScale;
-              currentScale = Math.max(0.5, Math.min(initialScale * scaleFactor, 3));
-
-              // 調整偏移量以保持視圖中心
-              mapOffset.x = mapOffset.x * (currentScale / oldScale);
-              mapOffset.y = mapOffset.y * (currentScale / oldScale);
-
-              // 更新地圖位置
-              updateMapContainerPosition();
-          }
-
-            else if (isDraggingMap && e.touches.length === 1) {
-                // 處理單指拖拽
-                e.preventDefault();
-
-                const touch = e.touches[0];
-
-                // 計算實際偏移量，應用一個係數使其更貼近手指移動距離
-                const dampingFactor = 0.8; // 減小拖拽靈敏度
-                const deltaX = (touch.clientX - dragStart.x) * dampingFactor;
-                const deltaY = (touch.clientY - dragStart.y) * dampingFactor;
-
-                // 更新地圖偏移量
-                mapOffset.x += deltaX;
-                mapOffset.y += deltaY;
-
-                // 重要：先更新拖動起始點，然後再更新地圖
-                // 這樣可以避免拖拽放大效應
-                dragStart.x = touch.clientX;
-                dragStart.y = touch.clientY;
-
-                // 只更新CSS transform，不重繪地圖
-                updateMapContainerPosition();
-            }
-
-        }, { passive: false });
-
-        // 触摸开始事件 - 处理地图拖拽
-        mapCanvas.addEventListener('touchstart', (e) => {
-            // 对于纵剖面模式，跳过处理
-            if (isProfileMode) {
-                return;
-            }
-
-            // 只有在没有激活任何绘图工具和测量工具时才启用拖移
-            if (isMapDrawing || isMapErasing || isPolylineMode) {
-                return;
-            }
-
-            // 判断是否为多指触摸（缩放手势）
-            if (e.touches.length === 2) {
-                // 记录初始的两指距离，用于后续缩放计算
+            if (isPinching && e.touches.length === 2) {
+                // 雙指縮放處理
                 const touch1 = e.touches[0];
                 const touch2 = e.touches[1];
+
+                // 計算當前兩指距離
+                const currentDistance = Math.hypot(
+                    touch1.clientX - touch2.clientX,
+                    touch1.clientY - touch2.clientY
+                );
+
+                // 計算縮放比例 - 更直接的計算方式
+                const scaleChange = currentDistance / pinchStartDistance;
+                currentScale = initialScale * scaleChange;
+
+                // 限制縮放範圍
+                currentScale = Math.max(0.5, Math.min(currentScale, 3));
+
+                // 計算縮放中心點
+                const pinchCenterX = (touch1.clientX + touch2.clientX) / 2;
+                const pinchCenterY = (touch1.clientY + touch2.clientY) / 2;
+
+                // 計算縮放後的新偏移，保持縮放中心點不變
+                mapOffset.x = pinchCenterX - (pinchCenterX - initialOffset.x) * scaleChange;
+                mapOffset.y = pinchCenterY - (pinchCenterY - initialOffset.y) * scaleChange;
+
+                // 立即更新地圖位置
+                updateMapContainerPosition();
+            }
+            else if (isDraggingMap && e.touches.length === 1) {
+                // 單指拖拽處理 - 直接一對一映射移動
+                const touch = e.touches[0];
+
+                // 更新地圖偏移量 - 不使用任何減速因子，確保一對一跟隨
+                mapOffset.x = initialOffset.x + (touch.clientX - touchStartX);
+                mapOffset.y = initialOffset.y + (touch.clientY - touchStartY);
+
+                // 立即更新地圖位置
+                updateMapContainerPosition();
+            }
+        }, { passive: false });
+
+        // 觸控開始事件
+        mapCanvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+
+            // 對於縱剖面模式，跳過處理
+            if (isProfileMode) return;
+
+            // 只有在沒有激活任何繪圖工具和測量工具時才啟用交互
+            if (isMapDrawing || isMapErasing || isPolylineMode) return;
+
+            // 保存初始狀態 - 這很重要
+            initialOffset = {
+                x: mapOffset.x,
+                y: mapOffset.y
+            };
+
+            // 判斷是否為多指觸摸（縮放手勢）
+            if (e.touches.length === 2) {
+                const touch1 = e.touches[0];
+                const touch2 = e.touches[1];
+
+                // 記錄初始兩指位置和距離
+                touchStartX = touch1.clientX;
+                touchStartY = touch1.clientY;
+                touch2StartX = touch2.clientX;
+                touch2StartY = touch2.clientY;
+
                 pinchStartDistance = Math.hypot(
                     touch1.clientX - touch2.clientX,
                     touch1.clientY - touch2.clientY
                 );
+
                 initialScale = currentScale;
-
-                // 添加以下代碼：記錄縮放中心點
-                const pinchCenterX = (touch1.clientX + touch2.clientX) / 2;
-                const pinchCenterY = (touch1.clientY + touch2.clientY) / 2;
-
-                // 設置變換原點為兩指中心
-                if (mapCanvas) {
-                    const rect = mapCanvas.getBoundingClientRect();
-                    const originX = (pinchCenterX - rect.left) / currentScale;
-                    const originY = (pinchCenterY - rect.top) / currentScale;
-                    mapCanvas.style.transformOrigin = `${originX}px ${originY}px`;
-                }
-                if (mapDrawingCanvas) {
-                    mapDrawingCanvas.style.transformOrigin = mapCanvas.style.transformOrigin;
-                }
-                if (highlightCanvas) {
-                    highlightCanvas.style.transformOrigin = mapCanvas.style.transformOrigin;
-                }
-
                 isPinching = true;
-                // 防止拖移状态同时激活
                 isDraggingMap = false;
             }
             else if (e.touches.length === 1) {
-                // 单指触摸 - 拖拽模式
-                e.preventDefault();
+                // 單指觸摸 - 拖拽模式
+                const touch = e.touches[0];
+                touchStartX = touch.clientX;
+                touchStartY = touch.clientY;
+
                 isDraggingMap = true;
                 isPinching = false;
-
-                // 保存触摸开始位置
-                const touch = e.touches[0];
-                dragStart.x = touch.clientX;
-                dragStart.y = touch.clientY;
             }
-        });
+        }, { passive: false });
 
         // 修改mouseup事件处理器
         document.addEventListener('mouseup', (e) => {
@@ -1031,24 +1012,24 @@
         // 觸摸結束事件
         document.addEventListener('touchend', (e) => {
             // 重置觸摸狀態
-            isDraggingMap = false;
-            isPinching = false;
+            if (isDraggingMap || isPinching) {
+                // 只有在地圖實際被操作後才延遲重繪
+                isDraggingMap = false;
+                isPinching = false;
 
-            // 如果需要重新生成地圖以反映新的縮放級別，延遲執行以確保順暢
-            if (e.touches.length === 0) {
-                // 移除硬體加速提示
-                const mapCanvas = document.getElementById('map-canvas');
-                const mapDrawingCanvas = document.getElementById('map-drawing-canvas');
-                if (mapCanvas) mapCanvas.style.willChange = 'auto';
-                if (mapDrawingCanvas) mapDrawingCanvas.style.willChange = 'auto';
-                if (highlightCanvas) highlightCanvas.style.willChange = 'auto';
-
-                // 延遲重繪地圖，確保UI交互已經結束
-                setTimeout(() => {
-                    generate2DMap();
-                }, 100);
+                // 如果沒有觸摸點了，需要重新生成地圖
+                if (e.touches.length === 0) {
+                    // 給CSS變換時間完成，然後再重繪
+                    setTimeout(() => {
+                        generate2DMap();
+                    }, 50); // 較短的延遲，提高響應性
+                }
+            } else {
+                // 如果沒有實際拖拽，直接重置狀態
+                isDraggingMap = false;
+                isPinching = false;
             }
-        }, { passive: false });
+        }, { passive: true });
 
         // 处理触摸取消事件（例如当触摸移出屏幕）
         document.addEventListener('touchcancel', () => {
@@ -1060,23 +1041,25 @@
             const mapCanvas = document.getElementById('map-canvas');
             const mapDrawingCanvas = document.getElementById('map-drawing-canvas');
 
-            // 分離平移和縮放變換，先縮放再平移
-            // 這樣可以避免平移被縮放影響
-            const transform = `translate(${mapOffset.x}px, ${mapOffset.y}px) scale(${currentScale})`;
+            // 直接使用 matrix 變換方式 - 可同時精確控制縮放和平移
+            // matrix(a, b, c, d, tx, ty) 相當於：
+            // a,b,c,d 控制縮放和傾斜，tx,ty 控制平移
+            const transform = `matrix(${currentScale}, 0, 0, ${currentScale}, ${mapOffset.x}, ${mapOffset.y})`;
 
-            // 使用同一個 transform 變換值以確保效率
+            // 應用相同的變換到所有相關畫布
             if (mapCanvas) {
                 mapCanvas.style.transform = transform;
+                mapCanvas.style.transformOrigin = '0 0'; // 確保從左上角開始變換
             }
 
-            // 同步移動繪圖畫布
             if (mapDrawingCanvas) {
                 mapDrawingCanvas.style.transform = transform;
+                mapDrawingCanvas.style.transformOrigin = '0 0';
             }
 
-            // 同步移動高亮層畫布
             if (highlightCanvas) {
                 highlightCanvas.style.transform = transform;
+                highlightCanvas.style.transformOrigin = '0 0';
             }
         }
 
@@ -2610,8 +2593,6 @@
 
         // 添加觸控事件處理
         let touchTimer = null;
-        let touchStartX = 0;
-        let touchStartY = 0;
 
         function handleMarkerTouchStart(event) {
             event.preventDefault();
