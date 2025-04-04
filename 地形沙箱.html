@@ -1503,36 +1503,32 @@
             generate2DMap();
         }
 
-        function handleProfileClick(e) {
+        function handleProfileClick(event) {
             if (!isProfileMode) return;
 
             // 防止事件传播（避免拖曳地图）
-            e.stopPropagation();
-
-            // 獲取點擊或觸控位置
-            const clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : null);
-            const clientY = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : null);
-
-            if (!clientX || !clientY) return; // 無效的事件
+            event.stopPropagation();
 
             try {
                 console.log("处理纵剖面点击");
                 // 获取点击位置
                 const rect = mapCanvas.getBoundingClientRect();
-                const clientX = e.clientX;
-                const clientY = e.clientY;
+                const clientX = event.clientX;
+                const clientY = event.clientY;
 
-                // 计算相对于变换后画布的点击位置
-                const rawX = clientX - rect.left;
-                const rawY = clientY - rect.top;
+                // 计算相对于变换后画布的位置
+                const mouseX = clientX - rect.left;
+                const mouseY = clientY - rect.top;
 
-                // 考虑地图的变换（CSS transform） - 轉換回原始畫布座標
+                // 關鍵修正: 更精確地將屏幕座標轉換為地圖座標
+                const withoutOffsetX = mouseX - mapOffset.x;
+                const withoutOffsetY = mouseY - mapOffset.y;
+
+                // 使用畫布中心點進行轉換
                 const canvasCenterX = mapCanvas.width / 2;
                 const canvasCenterY = mapCanvas.height / 2;
-                const withoutOffsetX = rawX - mapOffset.x;
-                const withoutOffsetY = rawY - mapOffset.y;
-                const transformedX = canvasCenterX + (withoutOffsetX - canvasCenterX) / currentScale; // *** 儲存這個 ***
-                const transformedY = canvasCenterY + (withoutOffsetY - canvasCenterY) / currentScale; // *** 儲存這個 ***
+                const transformedX = canvasCenterX + (withoutOffsetX - canvasCenterX) / currentScale;
+                const transformedY = canvasCenterY + (withoutOffsetY - canvasCenterY) / currentScale;
 
                 // 计算地图的基本参数
                 const mapSize = Math.min(mapCanvas.width, mapCanvas.height) * 0.8;
@@ -1545,20 +1541,19 @@
                 const gridX = (transformedX - offsetX) / pixelSize;
                 const gridY = (transformedY - offsetY) / pixelSize;
 
-                console.log("点击坐标:", {rawX, rawY, transformedX, transformedY, gridX, gridY});
+                console.log("点击坐标:", {mouseX, mouseY, transformedX, transformedY, gridX, gridY});
 
                 // 添加点（最多两个点）
                 if (profilePoints.length < 2) {
                     // 检查点是否在有效范围内
                     if (gridX >= 0 && gridX <= gridSegments && gridY >= 0 && gridY <= gridSegments) {
                         profilePoints.push({
-                            screenX: rawX, // 屏幕座標，可能較少用到
-                            screenY: rawY,
-                            transformedX: transformedX, // *** 確保儲存的是這個 ***
-                            transformedY: transformedY, // *** 確保儲存的是這個 ***
-                            gridX: gridX, // 網格座標用於計算高度
-                            gridY: gridY,
-                            // 不再需要 originalScale，因為我們始終使用 transformedX/Y
+                            screenX: mouseX,
+                            screenY: mouseY,
+                            transformedX: transformedX,
+                            transformedY: transformedY,
+                            gridX: gridX,
+                            gridY: gridY
                         });
 
                         console.log("添加纵剖面点:", profilePoints.length);
@@ -1566,25 +1561,15 @@
                         // 如果已选两个点，则绘制纵剖面
                         if (profilePoints.length === 2) {
                             console.log("绘制纵剖面线和图表");
-                            // generate2DMap 會調用 drawProfileLine
-                            generate2DMap(); // 重新繪製地圖以包含線條
-                            // 使用延时避免阻塞UI
+                            generate2DMap(); // 重繪地圖以包含線條
                             setTimeout(() => {
-                                try {
-                                    createProfileChart();
-                                    showProfilePanel();
-                                } catch (chartError) {
-                                    console.error("创建剖面图表错误:", chartError);
-                                    alert("创建剖面图表时发生错误，请重试");
-                                    resetProfileTool();
-                                }
+                                createProfileChart();
+                                showProfilePanel();
                             }, 100);
                         } else {
                             // 重绘地图以显示第一个点
-                            generate2DMap(); // 重新繪製地圖以包含第一個點
+                            generate2DMap();
                         }
-                    } else {
-                        console.warn("点击位置超出有效范围:", {gridX, gridY});
                     }
                 }
             } catch (error) {
@@ -3507,48 +3492,62 @@
 
                 // 取得事件坐標
                 function getMapEventCoordinates(e) {
+                    let clientX, clientY;
+
                     if (e.touches && e.touches[0]) {
-                        const rect = mapDrawingCanvas.getBoundingClientRect();
-                        return {
-                            x: e.touches[0].clientX - rect.left,
-                            y: e.touches[0].clientY - rect.top
-                        };
+                        clientX = e.touches[0].clientX;
+                        clientY = e.touches[0].clientY;
+                    } else {
+                        clientX = e.clientX;
+                        clientY = e.clientY;
                     }
+
+                    const rect = mapDrawingCanvas.getBoundingClientRect();
+                    const screenX = clientX - rect.left;
+                    const screenY = clientY - rect.top;
+
+                    // 關鍵修正: 將繪圖座標考慮縮放和偏移
+                    // 1. 取消偏移影響
+                    const withoutOffsetX = screenX - mapOffset.x;
+                    const withoutOffsetY = screenY - mapOffset.y;
+
+                    // 2. 使用畫布中心點進行轉換
+                    const canvasCenterX = mapDrawingCanvas.width / 2;
+                    const canvasCenterY = mapDrawingCanvas.height / 2;
+                    const transformedX = canvasCenterX + (withoutOffsetX - canvasCenterX) / currentScale;
+                    const transformedY = canvasCenterY + (withoutOffsetY - canvasCenterY) / currentScale;
+
                     return {
-                        x: e.offsetX,
-                        y: e.offsetY
+                        x: transformedX,
+                        y: transformedY,
+                        originalX: screenX,
+                        originalY: screenY
                     };
                 }
 
-                // 開始繪圖
                 function startMapDraw(e) {
                     if (isProfileMode || isPolylineMode) return;
-
                     if (!document.querySelector('.map-color-btn.active') && !isMapErasing) return;
 
-                    // 優先處理繪圖事件，阻止地圖拖曳
                     e.preventDefault();
                     e.stopPropagation();
 
-                    // 設置繪圖為優先狀態
                     isMapDrawing = true;
                     isDraggingMap = false;
-                    isPinching = false;
 
                     const coords = getMapEventCoordinates(e);
                     [lastMapX, lastMapY] = [coords.x, coords.y];
 
-                    // 設置繪圖模式
+                    // 设置绘图模式
                     mapDrawingContext.globalCompositeOperation = isMapErasing ? 'destination-out' : 'source-over';
                     mapDrawingContext.lineWidth = isMapErasing ? document.getElementById('eraser-size').value * 2 : 3;
 
-                    // 如果是第一次繪圖，保存初始空白狀態
+                    // 如果是第一次绘图，保存初始空白状态
                     if (mapHistoryIndex === -1) {
                         saveMapDrawingToHistory();
                     }
                 }
 
-                // 繪圖過程
                 function mapDraw(e) {
                     if (!isMapDrawing) return;
 
@@ -3686,7 +3685,7 @@
                             // 提供視覺反饋，顯示畫筆已激活
                             mapDrawingCanvas.style.pointerEvents = 'auto';
                             mapDrawingCanvas.style.cursor = 'crosshair';
-                            
+
                             // 在移動設備上顯示提示
                             if (isMobile) {
                                 const feedback = document.createElement('div');
@@ -4230,12 +4229,19 @@
                 mapCanvas.addEventListener('click', handleMapClick);
                 // 添加觸控支援
                 mapCanvas.addEventListener('touchend', function(e) {
-                    // 確保不是在拖曳或縮放操作中
+                    // 在touchend時觸發自定義點擊事件，確保在移動設備上也能用
                     if (!isDraggingMap && !isPinching) {
-                        // 阻止其他觸控處理
                         e.preventDefault();
+
+                        // 將觸控轉換為模擬點擊
                         const touch = e.changedTouches[0];
-                        // 轉換觸控為點擊
+                        const rect = mapCanvas.getBoundingClientRect();
+
+                        // 同樣應用正確的座標轉換計算
+                        const screenX = touch.clientX - rect.left;
+                        const screenY = touch.clientY - rect.top;
+
+                        // 模擬點擊事件並傳入原始座標，由處理函數進行轉換
                         const clickEvent = new MouseEvent('click', {
                             clientX: touch.clientX,
                             clientY: touch.clientY,
@@ -4294,39 +4300,39 @@
             }
 
             if (!isPolylineMode) return;
-             const mapCanvas = document.getElementById('map-canvas');
-             if (!mapCanvas) return;
+            const mapCanvas = document.getElementById('map-canvas');
+            if (!mapCanvas) return;
 
-             const rect = mapCanvas.getBoundingClientRect();
-             // 获取屏幕点击坐标
-             const screenX = event.clientX - rect.left;
-             const screenY = event.clientY - rect.top;
+            const rect = mapCanvas.getBoundingClientRect();
+            // 获取屏幕点击坐标
+            const screenX = event.clientX - rect.left;
+            const screenY = event.clientY - rect.top;
 
-             // 地图中心点
-             const canvasCenterX = mapCanvas.width / 2;
-             const canvasCenterY = mapCanvas.height / 2;
+            // 关键修正: 更精确地将屏幕坐标转换为地图坐标
+            // 1. 取消偏移影响
+            const withoutOffsetX = screenX - mapOffset.x;
+            const withoutOffsetY = screenY - mapOffset.y;
 
-             // 计算转换后的坐标（考虑地图的偏移和缩放）
-             // 1. 移除偏移影响
-             const withoutOffsetX = screenX - mapOffset.x;
-             const withoutOffsetY = screenY - mapOffset.y;
+            // 2. 获取地图的中心点
+            const canvasCenterX = mapCanvas.width / 2;
+            const canvasCenterY = mapCanvas.height / 2;
 
-             // 2. 考虑缩放（相对于中心点）
-             const transformedX = canvasCenterX + (withoutOffsetX - canvasCenterX) / currentScale;
-             const transformedY = canvasCenterY + (withoutOffsetY - canvasCenterY) / currentScale;
+            // 3. 考虑缩放和中心点
+            const transformedX = canvasCenterX + (withoutOffsetX - canvasCenterX) / currentScale;
+            const transformedY = canvasCenterY + (withoutOffsetY - canvasCenterY) / currentScale;
 
-             // 保存原始坐标和变换后的坐标
-             polylinePoints.push({
-                 screenX: screenX,
-                 screenY: screenY,
-                 transformedX: transformedX,
-                 transformedY: transformedY
-             });
+            // 保存转换后的坐标
+            polylinePoints.push({
+                screenX: screenX,
+                screenY: screenY,
+                transformedX: transformedX,
+                transformedY: transformedY
+            });
 
-             // 重新繪製地圖和連線
-             generate2DMap();
-             calculateDistance();
-         }
+            // 重绘地图和连线
+            generate2DMap();
+            calculateDistance();
+        }
 
         function displayDistance(context, offsetX, offsetY) {
             let accumulatedDistance = 0;
@@ -4388,24 +4394,24 @@
             context.save();
 
             context.strokeStyle = 'red';
-            context.lineWidth = 2;
+            context.lineWidth = 2 / currentScale; // 調整線寬以適應縮放
 
             context.beginPath();
-            // 使用变换后的坐标绘制线条
+            // 使用transformedX/Y坐标绘制
             context.moveTo(polylinePoints[0].transformedX, polylinePoints[0].transformedY);
             for (let i = 1; i < polylinePoints.length; i++) {
                 context.lineTo(polylinePoints[i].transformedX, polylinePoints[i].transformedY);
             }
             context.stroke();
 
-            // 繪製每個點，讓使用者知道他們點擊的位置
+            // 繪製每個點
             context.fillStyle = 'black';
             for (let i = 0; i < polylinePoints.length; i++) {
                 context.beginPath();
                 context.arc(
                     polylinePoints[i].transformedX,
                     polylinePoints[i].transformedY,
-                    4 / currentScale, // 根据缩放调整点的大小
+                    4 / currentScale, // 根據縮放調整點的大小
                     0,
                     2 * Math.PI
                 );
