@@ -964,15 +964,17 @@
 
         // 觸控開始事件
         mapCanvas.addEventListener('touchstart', (e) => {
+            // 檢查是否有活動的工具
+            const hasActiveDrawingTool = isMapDrawing || isMapErasing;
+            const hasActiveMeasurementTool = isProfileMode || isPolylineMode;
+
+            // 如果有活動工具，優先處理工具事件而非拖曳
+            if (hasActiveDrawingTool || hasActiveMeasurementTool) {
+                return;
+            }
+
+            // 以下是拖曳處理代碼
             e.preventDefault();
-
-            // 對於縱剖面模式，跳過處理
-            if (isProfileMode) return;
-
-            // 只有在沒有激活任何繪圖工具和測量工具時才啟用交互
-            if (isMapDrawing || isMapErasing || isPolylineMode) return;
-
-            // 保存初始狀態
             initialOffset = {
                 x: mapOffset.x,
                 y: mapOffset.y
@@ -1506,6 +1508,12 @@
 
             // 防止事件传播（避免拖曳地图）
             e.stopPropagation();
+
+            // 獲取點擊或觸控位置
+            const clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : null);
+            const clientY = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : null);
+
+            if (!clientX || !clientY) return; // 無效的事件
 
             try {
                 console.log("处理纵剖面点击");
@@ -3518,11 +3526,14 @@
 
                     if (!document.querySelector('.map-color-btn.active') && !isMapErasing) return;
 
+                    // 優先處理繪圖事件，阻止地圖拖曳
                     e.preventDefault();
                     e.stopPropagation();
 
+                    // 設置繪圖為優先狀態
                     isMapDrawing = true;
                     isDraggingMap = false;
+                    isPinching = false;
 
                     const coords = getMapEventCoordinates(e);
                     [lastMapX, lastMapY] = [coords.x, coords.y];
@@ -3670,6 +3681,33 @@
                         // 啟用繪圖功能
                         mapDrawingCanvas.style.pointerEvents = 'auto';
                         mapDrawingCanvas.style.cursor = 'crosshair';
+                        // 增加觸控反饋
+                        if (isMapDrawing) {
+                            // 提供視覺反饋，顯示畫筆已激活
+                            mapDrawingCanvas.style.pointerEvents = 'auto';
+                            mapDrawingCanvas.style.cursor = 'crosshair';
+                            
+                            // 在移動設備上顯示提示
+                            if (isMobile) {
+                                const feedback = document.createElement('div');
+                                feedback.textContent = '繪圖模式已啟用';
+                                feedback.style.position = 'fixed';
+                                feedback.style.top = '50%';
+                                feedback.style.left = '50%';
+                                feedback.style.transform = 'translate(-50%, -50%)';
+                                feedback.style.background = 'rgba(0,0,0,0.7)';
+                                feedback.style.color = 'white';
+                                feedback.style.padding = '10px';
+                                feedback.style.borderRadius = '5px';
+                                feedback.style.zIndex = '9999';
+                                document.body.appendChild(feedback);
+
+                                // 2秒後移除提示
+                                setTimeout(() => {
+                                    document.body.removeChild(feedback);
+                                }, 2000);
+                            }
+                        }
                     });
                 });
 
@@ -4190,6 +4228,23 @@
                 highlightContext = highlightCanvas.getContext('2d');
 
                 mapCanvas.addEventListener('click', handleMapClick);
+                // 添加觸控支援
+                mapCanvas.addEventListener('touchend', function(e) {
+                    // 確保不是在拖曳或縮放操作中
+                    if (!isDraggingMap && !isPinching) {
+                        // 阻止其他觸控處理
+                        e.preventDefault();
+                        const touch = e.changedTouches[0];
+                        // 轉換觸控為點擊
+                        const clickEvent = new MouseEvent('click', {
+                            clientX: touch.clientX,
+                            clientY: touch.clientY,
+                            bubbles: true,
+                            cancelable: true
+                        });
+                        e.target.dispatchEvent(clickEvent);
+                    }
+                }, { passive: false });
                 polylineLayer = document.createElement('canvas');
                 polylineLayer.style.position = 'absolute';
                 polylineLayer.style.top = '0';
