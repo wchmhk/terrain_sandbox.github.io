@@ -527,16 +527,40 @@
             position: absolute;
             background-color: white;
             border: 1px solid #ccc;
+            border-radius: 8px;
             z-index: 1000;
             display: none;
-            box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            padding: 5px 0;
+            min-width: 150px; /* 確保菜單寬度足夠 */
         }
+
         .context-menu-item {
-            padding: 8px 12px;
+            padding: 12px 16px; /* 增大觸控區域 */
             cursor: pointer;
+            font-size: 16px; /* 增大字體 */
+            border-bottom: 1px solid #f1f1f1;
         }
-        .context-menu-item:hover {
-            background-color: #e0e0e0;
+
+        .context-menu-item:last-child {
+            border-bottom: none;
+        }
+
+        .context-menu-item:hover, .context-menu-item:active {
+            background-color: #f1f1f1;
+        }
+
+        /* 針對移動設備的樣式 */
+        @media (max-width: 768px) {
+            .context-menu-item {
+                padding: 14px 18px; /* 在移動設備上進一步增大觸控區域 */
+            }
+
+            .context-menu-close {
+                background-color: #f1f1f1;
+                text-align: center;
+                font-weight: bold;
+            }
         }
 
         /* 調整大小的控制點樣式 */
@@ -618,7 +642,26 @@
             height: 45px;
         }
 
+        #moving-indicator {
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            animation: pulse 1.5s infinite alternate;
+        }
 
+        @keyframes pulse {
+            from { opacity: 0.8; }
+            to { opacity: 1; }
+        }
+
+        /* 移動狀態下的標註樣式 */
+        .marker.moving {
+            opacity: 0.7;
+            transform: translate(-50%, -100%) scale(1.2) !important;
+            z-index: 1100 !important;
+            filter: drop-shadow(0 0 5px rgba(255,255,0,0.8));
+            transition: all 0.2s ease-out;
+        }
 
     </style>
 </head>
@@ -632,6 +675,7 @@
 </div>
 <!-- 右鍵菜單 -->
 <div id="contextMenu" class="context-menu">
+    <div class="context-menu-item" id="moveMarker">移動標記</div>
     <div class="context-menu-item" id="editMarker">編輯標記</div>
     <div class="context-menu-item" id="deleteMarker">刪除標記</div>
 </div>
@@ -1037,6 +1081,10 @@
         let needsRedraw = false; // 標記是否需要重繪地圖
 
         let markers = []; // 儲存所有標記的陣列
+
+        // 全局變量，用於跟踪標註移動狀態
+        let isMovingMarker = false;
+        let markerBeingMoved = null;
 
         // --- 新增：儲存自訂圖標 Base64 字串 ---
         const customMarkerIcons = {
@@ -1483,6 +1531,114 @@
 
         // 在適當的地方調用此函數
         hideOriginalSystemTools();
+
+        // 新增單獨的函數用於設置標註的事件處理
+        function setupMarkerEvents(markerElement) {
+            // 變數用於判斷是點擊還是長按
+            let touchStartTime = 0;
+            let touchTimer = null;
+            let startX = 0;
+            let startY = 0;
+            const LONG_PRESS_DURATION = 500; // 長按需要500毫秒
+            const MOVE_THRESHOLD = 10; // 移動超過10像素視為拖動而非點擊
+
+            // 觸控開始
+            markerElement.addEventListener('touchstart', function(event) {
+                event.preventDefault(); // 防止其他行為
+                touchStartTime = Date.now();
+                const touch = event.touches[0];
+                startX = touch.clientX;
+                startY = touch.clientY;
+
+                // 設置長按計時器
+                touchTimer = setTimeout(() => {
+                    // 長按觸發上下文菜單
+                    const marker = markers.find(m => m.element === markerElement);
+                    if (marker) {
+                        activeMarker = marker;
+                        showMarkerMenu(touch.clientX, touch.clientY);
+                    }
+                }, LONG_PRESS_DURATION);
+            });
+
+            // 觸控移動 - 如果移動太多，取消長按計時器
+            markerElement.addEventListener('touchmove', function(event) {
+                if (!touchTimer) return;
+
+                const touch = event.touches[0];
+                const moveX = Math.abs(touch.clientX - startX);
+                const moveY = Math.abs(touch.clientY - startY);
+
+                if (moveX > MOVE_THRESHOLD || moveY > MOVE_THRESHOLD) {
+                    clearTimeout(touchTimer);
+                    touchTimer = null;
+                }
+            });
+
+            // 觸控結束
+            markerElement.addEventListener('touchend', function(event) {
+                // 清除長按計時器
+                if (touchTimer) {
+                    clearTimeout(touchTimer);
+                    touchTimer = null;
+                }
+
+                // 計算觸摸時間
+                const touchDuration = Date.now() - touchStartTime;
+                if (touchDuration < LONG_PRESS_DURATION) {
+                    // 短按 - 可以實現選擇標記或其他功能
+                    const marker = markers.find(m => m.element === markerElement);
+                    if (marker) {
+                        // 選擇標記的邏輯 - 可選
+                        // selectMarker(marker);
+                    }
+                }
+            });
+
+            // 保留原有的右鍵點擊事件 (鍵鼠設備)
+            markerElement.addEventListener('contextmenu', handleMarkerContextMenu);
+        }
+
+        // 新增顯示標註菜單的函數
+        function showMarkerMenu(x, y) {
+            // 獲取上下文菜單元素
+            const contextMenu = document.getElementById('contextMenu');
+            if (!contextMenu) return;
+
+            // 定位菜單
+            contextMenu.style.display = 'block';
+
+            // 調整菜單位置，確保在螢幕內
+            const menuWidth = contextMenu.offsetWidth;
+            const menuHeight = contextMenu.offsetHeight;
+            const windowWidth = window.innerWidth;
+            const windowHeight = window.innerHeight;
+
+            // 避免菜單超出螢幕
+            let menuX = x;
+            let menuY = y;
+
+            if (menuX + menuWidth > windowWidth) {
+                menuX = windowWidth - menuWidth - 5;
+            }
+
+            if (menuY + menuHeight > windowHeight) {
+                menuY = windowHeight - menuHeight - 5;
+            }
+
+            contextMenu.style.left = `${menuX}px`;
+            contextMenu.style.top = `${menuY}px`;
+
+            // 在觸控設備上添加額外的關閉按鈕
+            let closeItem = contextMenu.querySelector('.context-menu-close');
+            if (!closeItem) {
+                const closeDiv = document.createElement('div');
+                closeDiv.className = 'context-menu-item context-menu-close';
+                closeDiv.textContent = '關閉';
+                closeDiv.addEventListener('click', hideContextMenu);
+                contextMenu.appendChild(closeDiv);
+            }
+        }
 
         function updateMapContainerPosition() {
             const mapCanvas = document.getElementById('map-canvas');
@@ -3046,6 +3202,27 @@
         function onTouchStart(event) {
             event.preventDefault();
 
+            // 處理移動標註模式
+            if (currentTool === 'moveMarker' && markerBeingMoved) {
+                const touch = event.touches[0];
+                updateTouchPosition(touch);
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObject(terrain);
+
+                if (intersects.length > 0) {
+                    const newPosition = intersects[0].point;
+                    updateMarkerPosition(markerBeingMoved, newPosition);
+
+                    // 重置狀態
+                    isMovingMarker = false;
+                    markerBeingMoved = null;
+                    currentTool = null;
+                    controls.enabled = true;
+                    hideMovingIndicator();
+                }
+                return;
+            }
+
             if (currentTool === 'addMarker') {
                 const touch = event.touches[0];
                 const rect = renderer.domElement.getBoundingClientRect();
@@ -3068,6 +3245,10 @@
 
         function onTouchMove(event) {
             event.preventDefault();
+
+            // 更新狀態欄 - 無論是否按下
+            updateStatusBar(event);
+
             if (!isMouseDown) return;
 
             const touch = event.touches[0];
@@ -3294,6 +3475,31 @@
                 });
 
             } catch (error) {
+
+              // 添加觸摸事件處理
+              renderer.domElement.addEventListener('touchmove', function(e) {
+                  // 防止頁面滾動
+                  e.preventDefault();
+
+                  // 觸摸移動時更新狀態欄
+                  updateStatusBar(e);
+
+                  // 如果正在使用地形工具，則更新指示器
+                  if (currentTool && radiusIndicator) {
+                      const touch = e.touches[0];
+                      const rect = renderer.domElement.getBoundingClientRect();
+                      mouse.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
+                      mouse.y = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
+
+                      raycaster.setFromCamera(mouse, camera);
+                      const intersects = raycaster.intersectObject(terrain);
+
+                      if (intersects.length > 0) {
+                          updateRadiusIndicator(intersects[0].point);
+                      }
+                  }
+              }, { passive: false });
+
                 console.error("初始化事件監聽器錯誤:", error);
             }
         }
@@ -3477,6 +3683,27 @@
 
         function onMouseDown(event) {
             event.preventDefault();
+
+            // 處理移動標註模式
+            if (currentTool === 'moveMarker' && markerBeingMoved) {
+                updateMousePosition(event);
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObject(terrain);
+
+                if (intersects.length > 0) {
+                    const newPosition = intersects[0].point;
+                    updateMarkerPosition(markerBeingMoved, newPosition);
+
+                    // 重置狀態
+                    isMovingMarker = false;
+                    markerBeingMoved = null;
+                    currentTool = null;
+                    controls.enabled = true;
+                    renderer.domElement.style.cursor = 'default';
+                    hideMovingIndicator();
+                }
+                return;
+            }
 
             if (currentTool === 'addMarker') {
                 addMarker(event);
@@ -3807,6 +4034,8 @@
                 markerLabel.style.whiteSpace = 'nowrap';
                 markerLabel.style.marginTop = '2px';
                 markerDiv.appendChild(markerLabel);
+                setupMarkerEvents(markerDiv);
+
 
                 // 添加事件監聽器
                 markerDiv.addEventListener('contextmenu', handleMarkerContextMenu);
@@ -3983,6 +4212,32 @@
               hideContextMenu();
          });
 
+         // 移動標記事件
+         document.getElementById('moveMarker').addEventListener('click', () => {
+             if (activeMarker) {
+                 // 設置標註為移動狀態
+                 isMovingMarker = true;
+                 markerBeingMoved = activeMarker;
+
+                 // 視覺反饋 - 改變標註樣式
+                 markerBeingMoved.element.style.opacity = '0.7';
+                 markerBeingMoved.element.style.transform = 'translate(-50%, -100%) scale(1.2)'; // 放大顯示
+                 markerBeingMoved.element.style.zIndex = '1100'; // 提高層級
+
+                 // 顯示提示訊息
+                 showMovingIndicator('點擊地形的新位置以移動標註');
+
+                 // 切換到特殊模式，讓地形可點擊
+                 currentTool = 'moveMarker';
+                 controls.enabled = false;
+
+                 // 改變鼠標樣式
+                 renderer.domElement.style.cursor = 'move';
+             }
+
+             hideContextMenu();
+         });
+
         // 點擊其他地方隱藏右鍵菜單
          document.addEventListener('click', hideContextMenu);
 
@@ -3990,6 +4245,56 @@
          function hideContextMenu() {
              document.getElementById('contextMenu').style.display = 'none';
              activeMarker = null;
+         }
+
+         // 顯示移動指示器
+         function showMovingIndicator(message) {
+             let indicator = document.getElementById('moving-indicator');
+             if (!indicator) {
+                 indicator = document.createElement('div');
+                 indicator.id = 'moving-indicator';
+                 indicator.style.position = 'fixed';
+                 indicator.style.top = '50%';
+                 indicator.style.left = '50%';
+                 indicator.style.transform = 'translate(-50%, -50%)';
+                 indicator.style.background = 'rgba(0, 0, 0, 0.7)';
+                 indicator.style.color = 'white';
+                 indicator.style.padding = '10px 20px';
+                 indicator.style.borderRadius = '5px';
+                 indicator.style.zIndex = '3000';
+                 indicator.style.fontWeight = 'bold';
+                 document.body.appendChild(indicator);
+             }
+
+             indicator.textContent = message;
+             indicator.style.display = 'block';
+
+             // 5秒後自動隱藏
+             setTimeout(() => {
+                 indicator.style.display = 'none';
+             }, 5000);
+         }
+
+         // 隱藏移動指示器
+         function hideMovingIndicator() {
+             const indicator = document.getElementById('moving-indicator');
+             if (indicator) {
+                 indicator.style.display = 'none';
+             }
+         }
+
+         // 更新標註的位置
+         function updateMarkerPosition(marker, newPosition) {
+             // 更新標註的3D位置數據
+             marker.position = newPosition.clone();
+
+             // 重置標註的視覺樣式
+             marker.element.style.opacity = '1';
+             marker.element.style.transform = 'translate(-50%, -100%)'; // 恢復正常大小
+             marker.element.style.zIndex = '10'; // 恢復正常層級
+
+             // 更新DOM元素位置
+             updateMarkerPositions();
          }
 
         function modifyTerrain() {
@@ -4095,16 +4400,31 @@
 
         function updateStatusBar(event) {
             const heightMultiplier = 10;
-            const rect = renderer.domElement.getBoundingClientRect();
-            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-            raycaster.setFromCamera(mouse, camera);
+            // 獲取座標計算所需參數
+            const rect = renderer.domElement.getBoundingClientRect();
+            let statusX, statusY;
+
+            // 區分觸摸事件和滑鼠事件
+            if (event.touches) {
+                // 觸摸事件
+                const touch = event.touches[0];
+                statusX = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
+                statusY = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
+            } else {
+                // 滑鼠事件
+                statusX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                statusY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            }
+
+            // 使用射線投射找出對應地形點
+            raycaster.setFromCamera(new THREE.Vector2(statusX, statusY), camera);
             const intersects = raycaster.intersectObject(terrain);
 
             if (intersects.length > 0) {
                 const point = intersects[0].point;
 
+                // 計算6位數座標 - 確保在所有設備上都使用相同格式
                 const gridSpacing = 25;
                 const eastingBase = 10;
                 const northingBase = 65;
@@ -4114,23 +4434,22 @@
                 const gridZ = -point.z + 50;
 
                 // 1. 計算東行線編號（前兩位數）
-                 const eastingLineNumber = Math.floor(gridX / gridSpacing) + eastingBase;
+                const eastingLineNumber = Math.floor(gridX / gridSpacing) + eastingBase;
 
-                // 2. 計算東行格網內的小行位置（第三位數，使用餘數計算偏移量）
+                // 2. 計算東行格網內的小行位置（第三位數）
                 let eastingOffset = gridX % gridSpacing;
                 let eastingSubLine = Math.floor((eastingOffset / gridSpacing) * 9) + 1;
                 if (eastingSubLine > 9) eastingSubLine = 9;
 
-
-               // 3. 計算北行線編號（後兩位數）
+                // 3. 計算北行線編號（後兩位數）
                 const northingLineNumber = Math.floor(gridZ / gridSpacing) + northingBase;
 
-               // 4. 計算北行格網內的小行位置（第六位數，使用餘數計算偏移量，並確保由南到北遞增）
+                // 4. 計算北行格網內的小行位置（第六位數）
                 let northingOffset = gridZ % gridSpacing;
                 let northingSubLine = Math.floor((northingOffset / gridSpacing) * 9) + 1;
                 if (northingSubLine > 9) northingSubLine = 9;
 
-                 // 5. 組合六位數座標
+                // 5. 組合六位數座標
                 const eastingStr = String(eastingLineNumber).padStart(2, '0');
                 const eastingSubLineStr = String(eastingSubLine).padStart(1, '0');
                 const northingStr = String(northingLineNumber).padStart(2, '0');
@@ -4138,17 +4457,19 @@
 
                 const gridCoordinate = `${eastingStr}${eastingSubLineStr}${northingStr}${northingSubLineStr}`;
 
-
+                // 計算高度值
                 const heightValue = point.y * heightMultiplier;
                 const z = heightValue.toFixed(1);
 
+                // 計算坡度
                 const face = intersects[0].face;
                 const normal = face.normal.clone();
                 normal.applyQuaternion(terrain.quaternion);
                 const slope = Math.acos(normal.dot(new THREE.Vector3(0, 1, 0))) * (180 / Math.PI);
 
+                // 更新狀態欄
                 const statusBar = document.querySelector('.status-bar');
-                statusBar.textContent = `座標: ${gridCoordinate},  高度: ${z}m | 坡度: ${slope.toFixed(1)}°`;
+                statusBar.textContent = `座標: ${gridCoordinate} | 高度: ${z}m | 坡度: ${slope.toFixed(1)}°`;
             }
         }
 
@@ -5200,9 +5521,15 @@
                 const mapCanvas = document.getElementById('map-canvas');
                 const rect = mapCanvas.getBoundingClientRect();
 
-                // 获取鼠标在视窗中的位置
-                const clientX = event.clientX;
-                const clientY = event.clientY;
+                // 獲取鼠標或觸摸位置
+                let clientX, clientY;
+                if (event.touches && event.touches.length > 0) {
+                    clientX = event.touches[0].clientX;
+                    clientY = event.touches[0].clientY;
+                } else {
+                    clientX = event.clientX;
+                    clientY = event.clientY;
+                }
 
                 // 计算鼠标相对于变换后画布的位置
                 const mouseX = clientX - rect.left;
@@ -5650,6 +5977,16 @@
                 polylineLayer.style.left = '0';
                 document.getElementById('map-container').appendChild(polylineLayer);
             } catch (error) {
+
+              // 添加地圖觸摸移動事件
+              mapCanvas.addEventListener('touchmove', function(e) {
+                  // 如果正在拖動地圖則跳過更新
+                  if (isDraggingMap || isPinching) return;
+
+                  e.preventDefault();
+                  updateMapStatusBar(e);
+              }, { passive: false });
+
                 console.error("初始化地圖模式錯誤:", error);
             }
         }
@@ -5940,6 +6277,63 @@
         }
 
         function handleMapClick(event) {
+          // 如果在移動標註模式中
+          if (currentTool === 'moveMarker' && markerBeingMoved) {
+              const mapCanvas = document.getElementById('map-canvas');
+              const rect = mapCanvas.getBoundingClientRect();
+              const x = event.clientX - rect.left;
+              const y = event.clientY - rect.top;
+
+              // 將2D畫布坐標轉換為3D世界坐標
+              const normalizedX = (x - mapOffset.x) / currentScale;
+              const normalizedY = (y - mapOffset.y) / currentScale;
+
+              // 獲取地圖參數
+              const mapSize = Math.min(mapCanvas.width, mapCanvas.height) * 0.8;
+              const gridSegments = 100;
+              const pixelSize = mapSize / gridSegments;
+              const offsetX = (mapCanvas.width - gridSegments * pixelSize) / 2;
+              const offsetY = (mapCanvas.height - gridSegments * pixelSize) / 2;
+
+              // 計算相對於地形網格的位置
+              const gridX = (normalizedX - offsetX) / pixelSize;
+              const gridY = (normalizedY - offsetY) / pixelSize;
+
+              // 將網格坐標轉換為3D世界坐標
+              const terrainCenter = new THREE.Vector3(0, 0, 0);
+              terrain.localToWorld(terrainCenter);
+
+              // 計算相對於中心的偏移
+              const xOffset = (gridX / gridSegments) * 100 - 50;
+              const zOffset = (gridY / gridSegments) * 100 - 50;
+
+              // 獲取高度
+              const height = bilinearInterpolate(terrain.geometry.attributes.position.array, gridSegments + 1, gridX, gridY);
+
+              // 創建新的3D位置
+              const newPosition = new THREE.Vector3(
+                  terrainCenter.x + xOffset,
+                  height + 0.1, // 略微抬高以防止Z-fighting
+                  terrainCenter.z + zOffset
+              );
+
+              // 更新標註位置
+              updateMarkerPosition(markerBeingMoved, newPosition);
+
+              // 重置狀態
+              isMovingMarker = false;
+              markerBeingMoved = null;
+              currentTool = null;
+              controls.enabled = true;
+              mapCanvas.style.cursor = 'default';
+              hideMovingIndicator();
+
+              // 重新生成地圖以更新標註位置
+              generate2DMap();
+
+              return; // 不處理其他地圖點擊邏輯
+          }
+
             // 如果在縱剖面模式中，改用縱剖面處理函數
             if (isProfileMode) {
                 try {
