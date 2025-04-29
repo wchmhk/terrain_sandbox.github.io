@@ -1186,6 +1186,21 @@
 
         const mapCanvas = document.getElementById('map-canvas');
 
+        window.hideSystemToolbar = function() {
+            const systemToolbar = document.querySelector('.system-toolbar');
+            if (systemToolbar) {
+                systemToolbar.style.display = 'none';
+            }
+
+            // 如果有相關按鈕，也取消其激活狀態
+            const systemBtn = document.getElementById('system-btn');
+            if (systemBtn) {
+                systemBtn.classList.remove('active');
+            }
+
+            console.log("系統工具欄已隱藏");
+        };
+
         // 地圖拖動處理
         // 修改地图画布的mousedown事件处理器
         mapCanvas.addEventListener('mousedown', (e) => {
@@ -2968,10 +2983,19 @@
             const drawingToolbar = document.querySelector('.drawing-toolbar');
             const systemToolbar = document.querySelector('.system-toolbar');
 
-            // 輔助函數：僅隱藏系統工具欄並取消其按鈕激活狀態
+            // 隱藏系統工具欄
+            // 隱藏系統工具欄函數
             function hideSystemToolbar() {
-                if (systemToolbar) systemToolbar.style.display = 'none';
-                if (systemBtn) systemBtn.classList.remove('active');
+                const systemToolbar = document.querySelector('.system-toolbar');
+                if (systemToolbar) {
+                    systemToolbar.style.display = 'none';
+                }
+
+                // 如果有相關按鈕，也取消其激活狀態
+                const systemBtn = document.getElementById('system-btn');
+                if (systemBtn) {
+                    systemBtn.classList.remove('active');
+                }
             }
 
             // 地形工具按鈕 (底部) - 只控制自身工具欄
@@ -3272,6 +3296,16 @@
 
         function initEventListeners() {
             try {
+
+              const fileInput = document.getElementById('file-input');
+              if (fileInput) {
+                  // 當使用者選擇檔案後觸發 loadTerrain 函數
+                  fileInput.addEventListener('change', loadTerrain);
+                  console.log("File input change listener added."); // 確認監聽器已添加
+              } else {
+                  console.error("找不到 file-input 元素！");
+              }
+
                 // 地形工具按鈕事件監聽
                 document.querySelectorAll('.terrain-toolbar .tool-button[data-tool]').forEach(button => {
                     button.addEventListener('click', () => {
@@ -3338,11 +3372,17 @@
 
                 // 載入按鈕事件 (新按鈕)
                 const newLoadBtn = document.getElementById('new-load-btn');
-                if (newLoadBtn) {
+                if (newLoadBtn && fileInput) { // 確保兩個按鈕都存在
                     newLoadBtn.addEventListener('click', () => {
-                        document.getElementById('file-input').click();
-                        hideSystemToolbar(); // 點擊後隱藏次級菜單
+                        console.log("Load button clicked, triggering file input."); // 添加日誌
+                        fileInput.click(); // 觸發文件選擇對話框
+                        // 點擊按鈕後立即隱藏工具欄可能是個好主意
+                        // 但為了確保文件選擇流程不被打斷，可以考慮在 loadTerrain 成功後再隱藏
+                        hideSystemToolbar(); // 可以先保留在這裡，觀察效果
                     });
+                } else {
+                     if (!newLoadBtn) console.error("找不到 new-load-btn 按鈕！");
+                     if (!fileInput) console.error("找不到 file-input 元素（在 new-load-btn 監聽器中）！");
                 }
 
                 // 重設按鈕事件 (新按鈕)
@@ -4521,43 +4561,87 @@
         }
 
         function loadTerrain(event) {
+            console.log("File input changed! loadTerrain function triggered."); // 確認函數被調用
             try {
                 const file = event.target.files[0];
-                if (!file) return;
+                if (!file) {
+                    console.error("沒有選擇文件");
+                    return;
+                }
+
+                console.log("開始讀取文件:", file.name, "大小:", file.size); // 顯示文件信息
 
                 const reader = new FileReader();
                 reader.onload = function(e) {
                     try {
-                        const terrainData = JSON.parse(e.target.result);
+                        console.log("文件讀取完成，內容長度:", e.target.result.length);
+                        console.log("開始解析JSON");
+                        let terrainData;
 
-                        if (!terrainData.version || !terrainData.positions) {
-                            throw new Error('無效的地形數據格式');
+                        try {
+                            terrainData = JSON.parse(e.target.result);
+                            console.log("JSON 解析成功:", terrainData); // 顯示解析後的數據結構
+                        } catch (parseError) {
+                            console.error("JSON解析錯誤:", parseError);
+                            alert("無法解析地形文件，可能不是有效的JSON格式。錯誤信息: " + parseError.message);
+                            return;
                         }
+
+                        console.log("檢查數據格式");
+                        if (!terrainData.version || !terrainData.positions) {
+                            console.error("無效的地形數據格式，缺少 version 或 positions");
+                            throw new Error('無效的地形數據格式: 缺少必要的屬性');
+                        }
+
+                        console.log("數據格式有效，版本:", terrainData.version);
+                        console.log("加載的 positions 長度:", terrainData.positions.length);
 
                         const positions = terrain.geometry.attributes.position.array;
+                        console.log("當前地形 positions 長度:", positions.length);
+
                         if (positions.length !== terrainData.positions.length) {
-                            throw new Error('地形數據大小不匹配');
+                            console.error("地形數據大小不匹配");
+                            throw new Error(`地形數據大小不匹配: 文件(${terrainData.positions.length}) vs 當前(${positions.length})`);
                         }
 
+                        console.log("開始更新地形數據");
+                        // 復制地形數據
                         for (let i = 0; i < positions.length; i++) {
                             positions[i] = terrainData.positions[i];
                         }
 
                         terrain.geometry.attributes.position.needsUpdate = true;
+                        console.log("position.needsUpdate 設置為 true");
                         terrain.geometry.computeVertexNormals();
+                        console.log("已計算頂點法線");
                         updateTerrainMaterial();
+                        console.log("已更新地形材質");
 
+                        console.log("地形數據更新成功");
                         alert('地形載入成功！');
+
+                        // 只有在成功加載後才隱藏工具欄
+                        if (typeof hideSystemToolbar === 'function') {
+                             hideSystemToolbar();
+                        }
+
                     } catch (error) {
-                        console.error('載入地形時發生錯誤:', error);
-                        alert('載入地形時發生錯誤！');
+                        console.error('處理地形數據時發生錯誤:', error);
+                        alert('載入地形數據時發生錯誤: ' + error.message);
                     }
                 };
+
+                reader.onerror = function() {
+                    console.error("文件讀取錯誤:", reader.error);
+                    alert("讀取文件時發生錯誤");
+                };
+
+                console.log("開始讀取文件內容 (readAsText)");
                 reader.readAsText(file);
-                event.target.value = '';
+                event.target.value = ''; // 清空選擇，以便可以再次選擇同一個文件
             } catch (error) {
-                console.error('讀取文件錯誤:', error);
-                alert('讀取文件錯誤！');
+                console.error('loadTerrain 函數外部錯誤:', error);
+                alert('處理文件選擇時發生錯誤: ' + error.message);
             }
         }
 
@@ -6561,21 +6645,21 @@
         }
 
         function generate2DMap() {
-          try {
-              console.time('generate2DMap');
+            try {
+                console.time('generate2DMap');
 
-              // 獲取畫布和上下文
-              const mapCanvas = document.getElementById('map-canvas');
-              if (!mapCanvas) {
-                  console.error('找不到地圖畫布元素');
-                  return;
-              }
+                // 獲取畫布和上下文
+                const mapCanvas = document.getElementById('map-canvas');
+                if (!mapCanvas) {
+                    console.error('找不到地圖畫布元素');
+                    return;
+                }
 
-              const mapContext = mapCanvas.getContext('2d');
-              if (!mapContext) {
-                  console.error('無法獲取地圖畫布上下文');
-                  return;
-              }
+                const mapContext = mapCanvas.getContext('2d');
+                if (!mapContext) {
+                    console.error('無法獲取地圖畫布上下文');
+                    return;
+                }
 
               const mapContainer = document.getElementById('map-container');
               if (!mapContainer) {
