@@ -49,6 +49,16 @@
        pointer-events: none; /* 防止文字遮擋其他元素的事件 */
       }
 
+      #developer-info2 {
+         position: fixed;
+         top: 25px;
+         left: 10px;
+         z-index: 1001; /* 確保文字在其他元素之上 */
+         font-size: 12px;
+         color: rgba(0, 0, 0, 0.6);
+         pointer-events: none; /* 防止文字遮擋其他元素的事件 */
+        }
+
     #mobile-controls {
         position: fixed;
         bottom: 20px;
@@ -105,10 +115,12 @@
             padding: 10px;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-            display: none;
+            display: none; /* 保持默認隱藏 */
             flex-direction: column;
             gap: 10px;
-            width: 45px; /* 與 drawing-toolbar 相同 */
+            /* width: 45px; */ /* 移除固定寬度 */
+            width: 40px; /* 允許寬度自動調整 */
+            align-items: center; /* 使內容居中 */
         }
         .terrain-toolbar .tool-group {
             display: flex;
@@ -663,11 +675,53 @@
             transition: all 0.2s ease-out;
         }
 
+        /* === 新增滑動桿樣式 === */
+        .slider-container {
+            display: flex;
+            justify-content: space-around; /* 或 space-between */
+            align-items: center; /* 垂直居中滑桿本身 */
+            width: auto; /* 給容器一個寬度 */
+            height: 100px; /* 給容器一個高度以容納垂直滑桿和標籤 */
+            margin: 5px ; /* 上下間距 */
+            padding: 5px;
+            /* 可選：添加邊框便於調試 */
+            /* border: 1px solid #ccc; */
+            gap: 10px; /* 滑桿之間的間距 */
+        }
+
+        .slider-wrapper {
+            display: flex;
+            flex-direction: column; /* 標籤在滑桿上方 */
+            align-items: center; /* 水平居中 */
+            height: 100%;
+        }
+
+        .slider-label {
+            font-size: 10px;
+            color: #555;
+            margin-bottom: 5px;
+            white-space: nowrap;
+        }
+
+        .vertical-slider {
+            appearance: slider-vertical; /* 使滑桿垂直 */
+            -webkit-appearance: slider-vertical; /* 兼容 WebKit */
+            width: 5px; /* 垂直滑桿的寬度 */
+            height: 80px; /* 垂直滑桿的高度 */
+            padding: 0;
+            margin: 0;
+            cursor: pointer;
+            writing-mode: bt-lr; /* 對某些瀏覽器可能需要 */
+        }
+        /* === 新增樣式結束 === */
+
     </style>
 </head>
 <body>
 <input type="checkbox" id="debug-water-boundary" style="display:none">
 <div id="developer-info">開發者：黃智軒老師</div>
+<div id="developer-info2">特別鳴謝：廖瑞健老師</div>
+
     <div id="loading-screen">載入中...</div>
     <div id="map-container" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2;">
     <canvas id="map-canvas"></canvas>
@@ -749,35 +803,49 @@
     </button>
 </div>
 
-    <div class="terrain-toolbar">
-      <div class="tool-group">
-          <button class="tool-button" data-tool="raise">
-              ⬆️
-              <span class="tool-tooltip">抬升地形</span>
-          </button>
-          <button class="tool-button" data-tool="lower">
-              ⬇️
-              <span class="tool-tooltip">降低地形</span>
-          </button>
-          <button class="tool-button" data-tool="smooth">
-              🔄
-              <span class="tool-tooltip">平滑地形</span>
-          </button>
-          <button class="tool-button" id="addMarkerBtn">
-              📌
-              <span class="tool-tooltip">標註</span>
-          </button>
-          <!-- 新增上一步和下一步按鈕 -->
-          <button class="tool-button" id="terrain-undo-btn">
-              ↩️
-              <span class="tool-tooltip">上一步</span>
-          </button>
-          <button class="tool-button" id="terrain-redo-btn">
-              ↪️
-              <span class="tool-tooltip">下一步</span>
-          </button>
+<div class="terrain-toolbar">
+  <div class="tool-group">
+      <button class="tool-button" data-tool="raise">
+          ⬆️
+          <span class="tool-tooltip">抬升地形</span>
+      </button>
+      <button class="tool-button" data-tool="lower">
+          ⬇️
+          <span class="tool-tooltip">降低地形</span>
+      </button>
+      <button class="tool-button" data-tool="smooth">
+          🔄
+          <span class="tool-tooltip">平滑地形</span>
+      </button>
+
+      <!-- === 新增滑動桿容器 === -->
+      <div class="slider-container">
+          <div class="slider-wrapper">
+             <label for="toolbar-tool-strength" class="slider-label">強度</label>
+             <input type="range" id="toolbar-tool-strength" class="vertical-slider" min="1" max="100" value="40">
+          </div>
+          <div class="slider-wrapper">
+              <label for="toolbar-tool-radius" class="slider-label">範圍</label>
+              <input type="range" id="toolbar-tool-radius" class="vertical-slider" min="1" max="100" value="40">
+          </div>
       </div>
-    </div>
+      <!-- === 新增結束 === -->
+
+      <button class="tool-button" id="addMarkerBtn">
+          📌
+          <span class="tool-tooltip">標註</span>
+      </button>
+      <!-- 新增上一步和下一步按鈕 -->
+      <button class="tool-button" id="terrain-undo-btn">
+          ↩️
+          <span class="tool-tooltip">上一步</span>
+      </button>
+      <button class="tool-button" id="terrain-redo-btn">
+          ↪️
+          <span class="tool-tooltip">下一步</span>
+      </button>
+  </div>
+</div>
         <div class="drawing-toolbar">
             <div class="tool-group">
                 <button class="tool-button color-btn" data-color="#ff0000" style="background: #ff0000;">
@@ -1085,6 +1153,9 @@
         // 全局變量，用於跟踪標註移動狀態
         let isMovingMarker = false;
         let markerBeingMoved = null;
+
+        let isDraggingSlider = false; // <--- 新增這個全域變數
+
 
         // --- 新增：儲存自訂圖標 Base64 字串 ---
         const customMarkerIcons = {
@@ -3296,20 +3367,17 @@
 
         function initEventListeners() {
             try {
+                const fileInput = document.getElementById('file-input');
+                if (fileInput) {
+                    fileInput.addEventListener('change', loadTerrain);
+                    console.log("File input change listener added.");
+                } else {
+                    console.error("找不到 file-input 元素！");
+                }
 
-              const fileInput = document.getElementById('file-input');
-              if (fileInput) {
-                  // 當使用者選擇檔案後觸發 loadTerrain 函數
-                  fileInput.addEventListener('change', loadTerrain);
-                  console.log("File input change listener added."); // 確認監聽器已添加
-              } else {
-                  console.error("找不到 file-input 元素！");
-              }
-
-                // 地形工具按鈕事件監聽
+                // --- 地形工具按鈕事件監聽 (工具選擇) ---
                 document.querySelectorAll('.terrain-toolbar .tool-button[data-tool]').forEach(button => {
                     button.addEventListener('click', () => {
-                        // 如果當前工具已經被選中，則取消選中
                         if (currentTool === button.dataset.tool) {
                             currentTool = null;
                             button.classList.remove('active');
@@ -3319,11 +3387,7 @@
                             if (drawingCanvas) drawingCanvas.style.pointerEvents = 'none';
                             return;
                         }
-
-                        // 重置所有工具按鈕的狀態
                         resetTerrainTools();
-
-                        // 設置新的工具狀態
                         currentTool = button.dataset.tool;
                         button.classList.add('active');
                         controls.enabled = false;
@@ -3331,7 +3395,7 @@
                     });
                 });
 
-                // 標註按鈕事件監聽
+                // --- 標註按鈕事件監聽 ---
                 const addMarkerBtn = document.getElementById('addMarkerBtn');
                 if (addMarkerBtn) {
                     addMarkerBtn.addEventListener('click', () => {
@@ -3341,7 +3405,6 @@
                         console.log('currentTool 設置為:', currentTool);
                         controls.enabled = false;
                         if (drawingCanvas) drawingCanvas.style.pointerEvents = 'none';
-                        // 改變滑鼠樣式以提供視覺反饋
                         renderer.domElement.style.cursor = 'crosshair';
                         if (isMobile) {
                             alert('請點擊地圖位置來添加標記');
@@ -3349,197 +3412,167 @@
                     });
                 }
 
+                // --- 渲染容器的 Pointer/Touch 事件 (3D場景交互) ---
                 let renderContainer = renderer.domElement;
+                renderContainer.addEventListener('pointerdown', onMouseDown);
+                renderContainer.addEventListener('pointermove', onMouseMove);
+                renderContainer.addEventListener('pointerup', onMouseUp);
+                renderContainer.addEventListener('touchstart', onTouchStart, { passive: false });
+                renderContainer.addEventListener('touchmove', function(event) {
+                    // --- 修改：檢查目標是否為任何 range input ---
+                    if (event.target.type === 'range') {
+                        isDraggingSlider = true; // 標記正在拖動滑桿
+                        updateStatusBar(event); // 仍然更新狀態欄
+                        return; // 允許瀏覽器處理滑桿的預設觸控拖曳
+                    }
+                    // --- 修改結束 ---
+                    if (isDraggingSlider) { // 確保 touchstart 後立即移動也正確處理
+                        updateStatusBar(event);
+                        return;
+                    }
+                    event.preventDefault(); // 阻止 3D 場景交互的預設行為
+                    onTouchMove(event);
+                }, { passive: false });
+                renderContainer.addEventListener('touchend', onTouchEnd);
+                renderContainer.addEventListener('touchcancel', onTouchEnd);
 
-                if (isMobile) {
-                    renderContainer.addEventListener('touchstart', onTouchStart);
-                    renderContainer.addEventListener('touchmove', onTouchMove);
-                    renderContainer.addEventListener('touchend', onTouchEnd);
-                } else {
-                    renderContainer.addEventListener('pointerdown', onMouseDown);
-                    renderContainer.addEventListener('pointermove', onMouseMove);
-                    renderContainer.addEventListener('pointerup', onMouseUp);
-                }
+                // --- 為所有滑桿添加觸控事件監聽器 (包括新的和舊的) ---
+                document.querySelectorAll('input[type="range"]').forEach(slider => {
+                    slider.addEventListener('touchstart', (e) => {
+                        isDraggingSlider = true;
+                        // 阻止冒泡到 renderContainer
+                        e.stopPropagation();
+                    }, { passive: true });
+                });
+                // --- 結束 ---
 
-                // 保存按鈕事件 (新按鈕)
+                // --- 在 document 上監聽 touchend/touchcancel 以重置標誌 ---
+                document.addEventListener('touchend', () => { isDraggingSlider = false; });
+                document.addEventListener('touchcancel', () => { isDraggingSlider = false; });
+                // --- 結束 ---
+
+                // --- 系統按鈕事件 (底部系統菜單) ---
                 const newSaveBtn = document.getElementById('new-save-btn');
-                if (newSaveBtn) {
-                    newSaveBtn.addEventListener('click', () => {
-                        saveTerrain();
-                        hideSystemToolbar(); // 點擊後隱藏次級菜單
-                    });
-                }
+                if (newSaveBtn) { newSaveBtn.addEventListener('click', () => { saveTerrain(); hideSystemToolbar(); }); }
 
-                // 載入按鈕事件 (新按鈕)
                 const newLoadBtn = document.getElementById('new-load-btn');
-                if (newLoadBtn && fileInput) { // 確保兩個按鈕都存在
-                    newLoadBtn.addEventListener('click', () => {
-                        console.log("Load button clicked, triggering file input."); // 添加日誌
-                        fileInput.click(); // 觸發文件選擇對話框
-                        // 點擊按鈕後立即隱藏工具欄可能是個好主意
-                        // 但為了確保文件選擇流程不被打斷，可以考慮在 loadTerrain 成功後再隱藏
-                        hideSystemToolbar(); // 可以先保留在這裡，觀察效果
-                    });
-                } else {
-                     if (!newLoadBtn) console.error("找不到 new-load-btn 按鈕！");
-                     if (!fileInput) console.error("找不到 file-input 元素（在 new-load-btn 監聽器中）！");
-                }
+                if (newLoadBtn && fileInput) {
+                    newLoadBtn.addEventListener('click', () => { fileInput.click(); hideSystemToolbar(); });
+                } else { /* 錯誤處理 */ }
 
-                // 重設按鈕事件 (新按鈕)
                 const newResetBtn = document.getElementById('new-reset-btn');
-                if (newResetBtn) {
-                    newResetBtn.addEventListener('click', () => {
-                        resetTerrain();
-                        hideSystemToolbar(); // 點擊後隱藏次級菜單
-                    });
-                }
+                if (newResetBtn) { newResetBtn.addEventListener('click', () => { resetTerrain(); hideSystemToolbar(); }); }
 
-                // 設置按鈕事件 (新按鈕)
                 const newSettingsBtn = document.getElementById('new-settings-btn');
                 if (newSettingsBtn) {
                     newSettingsBtn.addEventListener('click', () => {
                         const panel = document.querySelector('.settings-panel');
                         panel.classList.toggle('show');
-                        hideSystemToolbar(); // 點擊後隱藏次級菜單
+                        hideSystemToolbar();
                     });
                 }
 
-                // 全屏按鈕事件 (新按鈕)
                 const newFullscreenBtn = document.getElementById('new-fullscreen-btn');
                 if (newFullscreenBtn) {
-                    // 確保 toggleFullscreen 函數存在且正確
-                    // 如果 toggleFullscreen 函數是在其他地方定義的，確保它能被訪問到
                     if (typeof toggleFullscreen === 'function') {
-                         newFullscreenBtn.addEventListener('click', () => {
-                             toggleFullscreen();
-                             hideSystemToolbar(); // 點擊後隱藏次級菜單
-                         });
-                    } else {
-                         console.error('toggleFullscreen function not found!');
-                    }
+                         newFullscreenBtn.addEventListener('click', () => { toggleFullscreen(); hideSystemToolbar(); });
+                    } else { console.error('toggleFullscreen function not found!'); }
                 }
+                // --- 系統按鈕結束 ---
 
-                // 地形上一步按鈕事件
+                // --- 地形歷史記錄按鈕 ---
                 const terrainUndoBtn = document.getElementById('terrain-undo-btn');
                 if (terrainUndoBtn) {
                     terrainUndoBtn.addEventListener('click', () => {
-                        if (terrainHistoryIndex > 0) {
+                         if (terrainHistoryIndex > 0) {
                             terrainHistoryIndex--;
-
-                            // 還原地形數據
                             if (terrainHistory[terrainHistoryIndex]?.data) {
-                                const terrainPositions = terrain.geometry.attributes.position.array;
-                                const savedTerrainPositions = terrainHistory[terrainHistoryIndex].data;
-
-                                for (let i = 0; i < terrainPositions.length; i++) {
-                                    terrainPositions[i] = savedTerrainPositions[i];
-                                }
+                                const positions = terrain.geometry.attributes.position.array;
+                                const savedPositions = terrainHistory[terrainHistoryIndex].data;
+                                for (let i = 0; i < positions.length; i++) { positions[i] = savedPositions[i]; }
                                 terrain.geometry.attributes.position.needsUpdate = true;
-                                terrain.geometry.computeVertexNormals();
-                                updateTerrainMaterial();
+                                terrain.geometry.computeVertexNormals(); updateTerrainMaterial();
                             }
                         }
                     });
                 }
-
-                // 地形下一步按鈕事件
                 const terrainRedoBtn = document.getElementById('terrain-redo-btn');
                 if (terrainRedoBtn) {
                     terrainRedoBtn.addEventListener('click', () => {
                         if (terrainHistoryIndex < terrainHistory.length - 1) {
                             terrainHistoryIndex++;
-
-                            // 恢復地形數據
-                            if (terrainHistory[terrainHistoryIndex]?.data) {
-                                const terrainPositions = terrain.geometry.attributes.position.array;
-                                const savedTerrainPositions = terrainHistory[terrainHistoryIndex].data;
-
-                                for (let i = 0; i < terrainPositions.length; i++) {
-                                    terrainPositions[i] = savedTerrainPositions[i];
-                                }
+                             if (terrainHistory[terrainHistoryIndex]?.data) {
+                                const positions = terrain.geometry.attributes.position.array;
+                                const savedPositions = terrainHistory[terrainHistoryIndex].data;
+                                for (let i = 0; i < positions.length; i++) { positions[i] = savedPositions[i]; }
                                 terrain.geometry.attributes.position.needsUpdate = true;
-                                terrain.geometry.computeVertexNormals();
-                                updateTerrainMaterial();
+                                terrain.geometry.computeVertexNormals(); updateTerrainMaterial();
                             }
                         }
                     });
                 }
+                // --- 地形歷史記錄結束 ---
 
-                // 縱剖面按鈕事件
+                // --- 地圖測量工具按鈕 (如果存在) ---
                 const profileToggleBtn = document.getElementById('profile-toggle');
-                if (profileToggleBtn) {
-                    profileToggleBtn.addEventListener('click', () => {
-                        toggleProfileMode();
-                    });
-                }
-
-                // 縱剖面關閉按鈕事件
+                if (profileToggleBtn) { profileToggleBtn.addEventListener('click', toggleProfileMode); }
                 const profileCloseBtn = document.getElementById('profile-close');
                 if (profileCloseBtn) {
                     profileCloseBtn.addEventListener('click', () => {
                         hideProfilePanel();
+                        if (isProfileMode) { toggleProfileMode(); }
+                    });
+                }
+                // --- 地圖測量結束 ---
+
+                // --- 鍵盤事件 ---
+                window.addEventListener('keydown', (e) => { /* ... */ });
+                window.addEventListener('keyup', (e) => { /* ... */ });
+                // --- 鍵盤結束 ---
+
+                // --- 窗口大小調整 ---
+                window.addEventListener('resize', () => { /* ... (保持原樣) ... */ });
+                // --- 窗口大小調整結束 ---
+
+                // === 新增：滑動桿同步 ===
+                const toolStrengthSlider = document.getElementById('tool-strength');
+                const toolRadiusSlider = document.getElementById('tool-radius');
+                const toolbarToolStrengthSlider = document.getElementById('toolbar-tool-strength');
+                const toolbarToolRadiusSlider = document.getElementById('toolbar-tool-radius');
+
+                // 當工具欄強度滑桿變化時，更新設定面板的滑桿
+                if (toolbarToolStrengthSlider && toolStrengthSlider) {
+                    toolbarToolStrengthSlider.addEventListener('input', (e) => {
+                        toolStrengthSlider.value = e.target.value;
+                        // 如果需要立即觸發設定面板滑桿的 input 事件（如果它有其他副作用），可以取消下面這行的註釋
+                        // toolStrengthSlider.dispatchEvent(new Event('input'));
                     });
                 }
 
-                // 鍵盤事件
-                window.addEventListener('keydown', (e) => {
-                    const key = e.key.toLowerCase();
-                    if (keys.hasOwnProperty(key)) {
-                        keys[key] = true;
-                    }
-                });
+                // 當工具欄範圍滑桿變化時，更新設定面板的滑桿
+                if (toolbarToolRadiusSlider && toolRadiusSlider) {
+                    toolbarToolRadiusSlider.addEventListener('input', (e) => {
+                        toolRadiusSlider.value = e.target.value;
+                        // toolRadiusSlider.dispatchEvent(new Event('input'));
+                    });
+                }
 
-                window.addEventListener('keyup', (e) => {
-                    const key = e.key.toLowerCase();
-                    if (keys.hasOwnProperty(key)) {
-                        keys[key] = false;
-                    }
-                });
+                // 當設定面板強度滑桿變化時，更新工具欄的滑桿
+                if (toolStrengthSlider && toolbarToolStrengthSlider) {
+                    toolStrengthSlider.addEventListener('input', (e) => {
+                        toolbarToolStrengthSlider.value = e.target.value;
+                    });
+                }
 
-                // 窗口大小調整事件
-                window.addEventListener('resize', () => {
-                    if (camera) {
-                        camera.aspect = window.innerWidth / window.innerHeight;
-                        camera.updateProjectionMatrix();
-                    }
-                    if (renderer) {
-                        renderer.setSize(window.innerWidth, window.innerHeight);
-                    }
-                    if (drawingCanvas) {
-                        drawingCanvas.width = window.innerWidth;
-                        drawingCanvas.height = window.innerHeight;
-                        if (historyIndex >= 0 && drawingHistory[historyIndex] && drawingHistory[historyIndex].canvas) {
-                            drawingContext.drawImage(drawingHistory[historyIndex].canvas, 0, 0);
-                        }
-                    }
-                });
+                // 當設定面板範圍滑桿變化時，更新工具欄的滑桿
+                if (toolRadiusSlider && toolbarToolRadiusSlider) {
+                    toolRadiusSlider.addEventListener('input', (e) => {
+                        toolbarToolRadiusSlider.value = e.target.value;
+                    });
+                }
+                // === 同步結束 ===
 
             } catch (error) {
-
-              // 添加觸摸事件處理
-              renderer.domElement.addEventListener('touchmove', function(e) {
-                  // 防止頁面滾動
-                  e.preventDefault();
-
-                  // 觸摸移動時更新狀態欄
-                  updateStatusBar(e);
-
-                  // 如果正在使用地形工具，則更新指示器
-                  if (currentTool && radiusIndicator) {
-                      const touch = e.touches[0];
-                      const rect = renderer.domElement.getBoundingClientRect();
-                      mouse.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
-                      mouse.y = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
-
-                      raycaster.setFromCamera(mouse, camera);
-                      const intersects = raycaster.intersectObject(terrain);
-
-                      if (intersects.length > 0) {
-                          updateRadiusIndicator(intersects[0].point);
-                      }
-                  }
-              }, { passive: false });
-
                 console.error("初始化事件監聽器錯誤:", error);
             }
         }
@@ -4787,6 +4820,51 @@
                             tube3DMesh = null;
                         }
                     });
+                }
+
+                // 重置工具狀態的輔助函數
+                function resetActiveTools(options = {}) {
+                    console.log('Resetting active tools with options:', options); // 調試日誌
+
+                    // 重置地形工具
+                    currentTool = null;
+                    document.querySelectorAll('.terrain-toolbar .tool-button[data-tool]').forEach(btn => btn.classList.remove('active'));
+                    document.getElementById('addMarkerBtn')?.classList.remove('active'); // 取消標註按鈕
+
+                    // 重置繪圖工具（除非特別保留）
+                    isDrawing = false;
+                    isErasing = false;
+                    document.querySelectorAll('.color-btn').forEach(btn => btn.classList.remove('active'));
+                    document.getElementById('eraser-btn')?.classList.remove('active');
+
+                    // 處理3D繪圖模式按鈕
+                    if (!options.keep3DMode) {
+                        console.log('Resetting 3D mode button'); // 調試日誌
+                        is3DDrawingMode = false;
+                        document.getElementById('draw3d-toggle')?.classList.remove('active');
+                         // 如果關閉3D模式，清除當前繪製中的線條
+                         if (tube3DMesh) {
+                            scene.remove(tube3DMesh);
+                            tube3DMesh = null;
+                        }
+                    } else {
+                         console.log('Keeping 3D mode button active'); // 調試日誌
+                    }
+
+                    // 重置滑鼠樣式和畫布交互
+                    renderer.domElement.style.cursor = 'default';
+                    if (drawingCanvas) drawingCanvas.style.pointerEvents = 'none'; // 默認禁用2D畫布交互
+
+                     // 啟用相機控制
+                    if (controls) controls.enabled = true;
+
+                    // 隱藏指示器
+                    if (radiusIndicator) radiusIndicator.visible = false;
+                    if (mouseHelper) mouseHelper.visible = false;
+                    const eraserIndicator = document.querySelector('div[style*="border-radius: 50%"]');
+                    if (eraserIndicator) eraserIndicator.style.display = 'none';
+
+                    console.log('Tools reset complete. is3DDrawingMode:', is3DDrawingMode, 'isErasing:', isErasing, 'currentTool:', currentTool); // 調試日誌
                 }
 
                 // 繪圖事件處理
