@@ -1479,32 +1479,14 @@
 
             // 判斷是否為多指觸摸（縮放手勢）
             if (e.touches.length === 2) {
-                const touch1 = e.touches[0];
-                const touch2 = e.touches[1];
-
-                // 記錄初始兩指位置和距離
-                touchStartX = touch1.clientX;
-                touchStartY = touch1.clientY;
-                touch2StartX = touch2.clientX;
-                touch2StartY = touch2.clientY;
-
-                // 記錄縮放中心點 - 添加這個
-                pinchStartCenter = {
-                    x: (touch1.clientX + touch2.clientX) / 2,
-                    y: (touch1.clientY + touch2.clientY) / 2
-                };
-
-                pinchStartDistance = Math.hypot(
-                    touch1.clientX - touch2.clientX,
-                    touch1.clientY - touch2.clientY
-                );
-
-                initialScale = currentScale;
-                isPinching = true;
-                isDraggingMap = false;
-                scalingChanged = false; // 重置縮放變更標記
+                // 雙指觸控 - 禁用縮放
+                isPinching = false;    // 關鍵：確保 isPinching 為 false
+                isDraggingMap = false; // 同時禁用雙指拖動，以避免意外行為
+                console.log("雙指觸控偵測到，但縮放功能已禁用。");
+                // 移除了原本用於初始化縮放的變量設置代碼
             }
             else if (e.touches.length === 1) {
+
                 // 單指觸摸 - 拖拽模式
                 const touch = e.touches[0];
                 touchStartX = touch.clientX;
