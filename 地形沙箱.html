@@ -115,7 +115,7 @@
             padding: 10px;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-            display: none; /* 保持默認隱藏 */
+            display: flex; /* 保持默認開啟 */
             flex-direction: column;
             gap: 10px;
             /* width: 45px; */ /* 移除固定寬度 */
@@ -250,7 +250,7 @@
             padding: 10px;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-            display: none;
+            display: flex;
             flex-direction: column;
             gap: 10px;
             width: 45px;
@@ -1156,6 +1156,8 @@
 
         let isDraggingSlider = false; // <--- 新增這個全域變數
 
+        let all3DDrawingsData = []; // 新增：用於存儲所有完成的3D繪圖數據
+        let currentLineWidth3D = 0.3; // 新增或修改：3D線條寬度，如果希望它是可配置的
 
         // --- 新增：儲存自訂圖標 Base64 字串 ---
         const customMarkerIcons = {
@@ -3531,7 +3533,7 @@
                 // --- 鍵盤結束 ---
 
                 // --- 窗口大小調整 ---
-                window.addEventListener('resize', () => { /* ... (保持原樣) ... */ });
+                window.addEventListener('resize', onWindowResize, false); // 修改這裡
                 // --- 窗口大小調整結束 ---
 
                 // === 新增：滑動桿同步 ===
@@ -4550,31 +4552,40 @@
             try {
                 const positions = terrain.geometry.attributes.position.array;
 
-                const terrainData = {
-                    version: '1.0',
+                // 序列化標註數據
+                const serializableMarkers = markers.map(marker => ({
+                    position: [marker.position.x, marker.position.y, marker.position.z],
+                    label: marker.label,
+                    icon: marker.icon,
+                    iconSrc: marker.iconSrc,
+                    color: marker.color
+                }));
+
+                // 序列化3D繪圖數據 (all3DDrawingsData 已經是可序列化的格式)
+                const serializable3DDrawings = JSON.parse(JSON.stringify(all3DDrawingsData));
+
+                const saveData = {
+                    version: '5.3.1', // 更新版本號以標識新的數據結構
                     timestamp: new Date().toISOString(),
-                    vertexCount: positions.length,
-                    positions: Array.from(positions),
-                    metadata: {
-                        gridSize: Math.sqrt(positions.length / 3),
-                        terrainWidth: 100,
-                        terrainHeight: 100
-                    }
+                    terrain: {
+                        vertexCount: positions.length,
+                        positions: Array.from(positions),
+                        metadata: {
+                            gridSize: Math.sqrt(positions.length / 3),
+                            terrainWidth: 100,
+                            terrainHeight: 100
+                        }
+                    },
+                    markers: serializableMarkers,
+                    drawings3D: serializable3DDrawings
                 };
 
-                // 產生預設檔名，但不直接使用
-                const defaultFileName = `terrain_${new Date().toISOString().slice(0,19).replace(/[:]/g, '-')}`;
-
-                // 彈出對話框讓使用者設定檔案名稱
+                const defaultFileName = `terrain_sandbox_v5.3.1_${new Date().toISOString().slice(0,19).replace(/[:]/g, '-')}`;
                 const fileName = prompt('請輸入保存檔案名稱:', defaultFileName);
-
-                // 如果使用者取消，則不保存檔案
                 if (fileName === null) return;
-
-                // 確保檔案名稱以 .json 結尾
                 const finalFileName = fileName.endsWith('.json') ? fileName : `${fileName}.json`;
 
-                const jsonString = JSON.stringify(terrainData);
+                const jsonString = JSON.stringify(saveData);
                 const blob = new Blob([jsonString], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
@@ -4586,92 +4597,222 @@
                 document.body.removeChild(link);
                 URL.revokeObjectURL(url);
 
-                alert('地形儲存成功！');
+                alert('地形、標註和3D繪圖儲存成功！');
             } catch (error) {
-                console.error('儲存地形時發生錯誤:', error);
-                alert('儲存地形時發生錯誤！');
+                console.error('儲存時發生錯誤:', error);
+                alert('儲存時發生錯誤！');
             }
         }
 
+        function createMarkerFromData(markerData) {
+            try {
+                const markerDiv = document.createElement('div');
+                markerDiv.classList.add('marker');
+                markerDiv.style.position = 'absolute';
+                document.getElementById('canvas-container').appendChild(markerDiv);
+
+                let markerIconElement;
+                if (markerData.iconSrc) {
+                    markerIconElement = document.createElement('img');
+                    markerIconElement.classList.add('marker-icon');
+                    markerIconElement.src = markerData.iconSrc;
+                    markerIconElement.alt = markerData.label;
+                    markerIconElement.style.display = 'block';
+                    markerIconElement.style.objectFit = 'contain';
+                } else {
+                    markerIconElement = document.createElement('div');
+                    markerIconElement.classList.add('marker-icon');
+                    markerIconElement.textContent = markerData.icon || "📍";
+                    markerIconElement.style.color = markerData.color || "red";
+                    markerIconElement.style.lineHeight = '1';
+                    markerIconElement.style.textAlign = 'center';
+                }
+                markerDiv.appendChild(markerIconElement);
+
+                const markerLabel = document.createElement('div');
+                markerLabel.classList.add('marker-label');
+                markerLabel.textContent = markerData.label;
+                const labelColor = markerData.color || "red";
+                markerLabel.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
+                markerLabel.style.color = labelColor;
+                markerLabel.style.border = `1px solid ${labelColor}`;
+                markerLabel.style.borderRadius = '3px';
+                markerLabel.style.padding = '2px 5px';
+                markerLabel.style.whiteSpace = 'nowrap';
+                markerLabel.style.marginTop = '2px';
+                markerDiv.appendChild(markerLabel);
+
+                setupMarkerEvents(markerDiv); // 確保為加載的標註也設置事件
+
+                const newMarker = {
+                    element: markerDiv,
+                    position: new THREE.Vector3(markerData.position[0], markerData.position[1], markerData.position[2]),
+                    label: markerData.label,
+                    icon: markerData.icon,
+                    iconSrc: markerData.iconSrc,
+                    color: labelColor
+                };
+                markers.push(newMarker);
+            } catch (error) {
+                console.error('從數據創建標註時出錯:', error, '數據:', markerData);
+            }
+        }
+
+        function recreate3DDrawing(drawingData) {
+            if (!drawingData || !drawingData.points || drawingData.points.length < 2) return;
+
+            const pointsVec3 = drawingData.points.map(p => new THREE.Vector3(p[0], p[1], p[2]));
+            const curve = new THREE.CatmullRomCurve3(pointsVec3);
+            const tubeGeometry = new THREE.TubeGeometry(
+                curve,
+                pointsVec3.length * 10,
+                drawingData.lineWidth || 0.3, // 使用保存的線寬或默認值
+                8,
+                false
+            );
+            const tubeMaterial = new THREE.MeshStandardMaterial({
+                color: new THREE.Color(drawingData.color || '#ff0000'), // 使用保存的顏色或默認值
+                metalness: 0.3,
+                roughness: 0.7,
+            });
+            const newTube = new THREE.Mesh(tubeGeometry, tubeMaterial);
+            scene.add(newTube);
+            tube3DMeshes.push(newTube); // 將重建的網格添加到場景網格數組
+        }
+
         function loadTerrain(event) {
-            console.log("File input changed! loadTerrain function triggered."); // 確認函數被調用
+            console.log("File input changed! loadTerrain function triggered.");
             try {
                 const file = event.target.files[0];
                 if (!file) {
                     console.error("沒有選擇文件");
                     return;
                 }
-
-                console.log("開始讀取文件:", file.name, "大小:", file.size); // 顯示文件信息
+                console.log("開始讀取文件:", file.name, "大小:", file.size);
 
                 const reader = new FileReader();
                 reader.onload = function(e) {
                     try {
                         console.log("文件讀取完成，內容長度:", e.target.result.length);
                         console.log("開始解析JSON");
-                        let terrainData;
-
+                        let loadedData;
                         try {
-                            terrainData = JSON.parse(e.target.result);
-                            console.log("JSON 解析成功:", terrainData); // 顯示解析後的數據結構
+                            loadedData = JSON.parse(e.target.result);
+                            console.log("JSON 解析成功");
                         } catch (parseError) {
                             console.error("JSON解析錯誤:", parseError);
                             alert("無法解析地形文件，可能不是有效的JSON格式。錯誤信息: " + parseError.message);
                             return;
                         }
 
-                        console.log("檢查數據格式");
-                        if (!terrainData.version || !terrainData.positions) {
-                            console.error("無效的地形數據格式，缺少 version 或 positions");
-                            throw new Error('無效的地形數據格式: 缺少必要的屬性');
+                        // --- 加載地形數據 ---
+                        if (loadedData.terrain && loadedData.terrain.positions && loadedData.terrain.vertexCount) {
+                            console.log("開始加載地形數據");
+                            const positions = terrain.geometry.attributes.position.array;
+                            if (positions.length !== loadedData.terrain.positions.length) {
+                                console.error("地形數據大小不匹配");
+                                throw new Error(`地形數據大小不匹配: 文件(${loadedData.terrain.positions.length}) vs 當前(${positions.length})`);
+                            }
+                            for (let i = 0; i < positions.length; i++) {
+                                positions[i] = loadedData.terrain.positions[i];
+                            }
+                            terrain.geometry.attributes.position.needsUpdate = true;
+                            terrain.geometry.computeVertexNormals();
+                            updateTerrainMaterial();
+                            console.log("地形數據加載完成");
+
+                            // 清空地形歷史並保存新狀態
+                            terrainHistory = [];
+                            terrainHistoryIndex = -1;
+                            const newTerrainPositions = new Float32Array(terrain.geometry.attributes.position.array);
+                            terrainHistory.push({ type: 'terrain', data: newTerrainPositions, drawingIndex: -1 });
+                            terrainHistoryIndex++;
+
+                        } else if (loadedData.positions && loadedData.vertexCount) { // 兼容舊格式
+                            console.warn("正在加載舊版地形數據格式");
+                            const positions = terrain.geometry.attributes.position.array;
+                             if (positions.length !== loadedData.positions.length) {
+                                console.error("舊版地形數據大小不匹配");
+                                throw new Error(`舊版地形數據大小不匹配: 文件(${loadedData.positions.length}) vs 當前(${positions.length})`);
+                            }
+                            for (let i = 0; i < positions.length; i++) {
+                                positions[i] = loadedData.positions[i];
+                            }
+                            terrain.geometry.attributes.position.needsUpdate = true;
+                            terrain.geometry.computeVertexNormals();
+                            updateTerrainMaterial();
+                            console.log("舊版地形數據加載完成");
+                             // 清空地形歷史並保存新狀態
+                            terrainHistory = [];
+                            terrainHistoryIndex = -1;
+                            const newTerrainPositions = new Float32Array(terrain.geometry.attributes.position.array);
+                            terrainHistory.push({ type: 'terrain', data: newTerrainPositions, drawingIndex: -1 });
+                            terrainHistoryIndex++;
+                        } else {
+                            console.warn("文件中未找到有效的地形數據 (terrain.positions 或舊版 positions)");
                         }
 
-                        console.log("數據格式有效，版本:", terrainData.version);
-                        console.log("加載的 positions 長度:", terrainData.positions.length);
 
-                        const positions = terrain.geometry.attributes.position.array;
-                        console.log("當前地形 positions 長度:", positions.length);
+                        // --- 清除現有的標註和3D繪圖 ---
+                        markers.forEach(marker => marker.element.remove());
+                        markers = [];
+                        tube3DMeshes.forEach(mesh => scene.remove(mesh));
+                        tube3DMeshes = [];
+                        all3DDrawingsData = [];
+                        if (tube3DMesh) { scene.remove(tube3DMesh); tube3DMesh = null; }
+                        drawingPoints = []; // 清空正在繪製的點
 
-                        if (positions.length !== terrainData.positions.length) {
-                            console.error("地形數據大小不匹配");
-                            throw new Error(`地形數據大小不匹配: 文件(${terrainData.positions.length}) vs 當前(${positions.length})`);
+                        // --- 加載標註數據 ---
+                        if (loadedData.markers && Array.isArray(loadedData.markers)) {
+                            console.log(`開始加載 ${loadedData.markers.length} 個標註`);
+                            loadedData.markers.forEach(markerData => {
+                                createMarkerFromData(markerData);
+                            });
+                            updateMarkerPositions(); // 確保標註在正確位置顯示
+                            console.log("標註數據加載完成");
+                        } else {
+                            console.warn("文件中未找到標註數據 (markers)");
                         }
 
-                        console.log("開始更新地形數據");
-                        // 復制地形數據
-                        for (let i = 0; i < positions.length; i++) {
-                            positions[i] = terrainData.positions[i];
+                        // --- 加載3D繪圖數據 ---
+                        if (loadedData.drawings3D && Array.isArray(loadedData.drawings3D)) {
+                            console.log(`開始加載 ${loadedData.drawings3D.length} 個3D繪圖`);
+                            all3DDrawingsData = JSON.parse(JSON.stringify(loadedData.drawings3D)); // 深拷貝
+                            all3DDrawingsData.forEach(drawingData => {
+                                recreate3DDrawing(drawingData);
+                            });
+                            console.log("3D繪圖數據加載完成");
+                        } else {
+                            console.warn("文件中未找到3D繪圖數據 (drawings3D)");
                         }
 
-                        terrain.geometry.attributes.position.needsUpdate = true;
-                        console.log("position.needsUpdate 設置為 true");
-                        terrain.geometry.computeVertexNormals();
-                        console.log("已計算頂點法線");
-                        updateTerrainMaterial();
-                        console.log("已更新地形材質");
+                        // 清空並重置2D繪圖歷史
+                        drawingContext.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                        drawingHistory = [];
+                        historyIndex = -1;
+                        saveToHistory(); // 保存初始空白繪圖狀態
 
-                        console.log("地形數據更新成功");
-                        alert('地形載入成功！');
+                        // 清空並重置3D繪圖歷史
+                        tube3DMeshHistory = [JSON.parse(JSON.stringify(all3DDrawingsData))]; // 初始狀態為已加載的3D繪圖
+                        tube3DMeshHistoryIndex = 0;
 
-                        // 只有在成功加載後才隱藏工具欄
+
+                        alert('數據載入成功！');
                         if (typeof hideSystemToolbar === 'function') {
                              hideSystemToolbar();
                         }
 
                     } catch (error) {
-                        console.error('處理地形數據時發生錯誤:', error);
-                        alert('載入地形數據時發生錯誤: ' + error.message);
+                        console.error('處理數據時發生錯誤:', error);
+                        alert('載入數據時發生錯誤: ' + error.message);
                     }
                 };
-
                 reader.onerror = function() {
                     console.error("文件讀取錯誤:", reader.error);
                     alert("讀取文件時發生錯誤");
                 };
-
-                console.log("開始讀取文件內容 (readAsText)");
                 reader.readAsText(file);
-                event.target.value = ''; // 清空選擇，以便可以再次選擇同一個文件
+                event.target.value = '';
             } catch (error) {
                 console.error('loadTerrain 函數外部錯誤:', error);
                 alert('處理文件選擇時發生錯誤: ' + error.message);
@@ -4679,28 +4820,53 @@
         }
 
         function resetTerrain() {
-           try {
-               if (!confirm('確定要重設地形嗎？這將清除所有修改。')) return;
+                   try {
+                       if (!confirm('確定要重設嗎？這將清除所有地形修改、標註和3D繪圖。')) return;
 
-               const positions = terrain.geometry.attributes.position.array;
-               for (let i = 0; i < positions.length; i++) {
-                   positions[i] = initialTerrainPositions[i];
-               }
+                       // 重設地形
+                       const positions = terrain.geometry.attributes.position.array;
+                       for (let i = 0; i < positions.length; i++) {
+                           positions[i] = initialTerrainPositions[i];
+                       }
+                       terrain.geometry.attributes.position.needsUpdate = true;
+                       terrain.geometry.computeVertexNormals();
+                       updateTerrainMaterial();
 
-               terrain.geometry.attributes.position.needsUpdate = true;
-               terrain.geometry.computeVertexNormals();
-               updateTerrainMaterial();
+                       // 清除標註
+                       markers.forEach(marker => marker.element.remove());
+                       markers = [];
+                       updateMarkerPositions(); // 更新顯示
 
-               terrainHistory = [];
-               terrainHistoryIndex = -1;
-               saveToHistory();
+                       // 清除3D繪圖
+                       tube3DMeshes.forEach(mesh => scene.remove(mesh));
+                       tube3DMeshes = [];
+                       if (tube3DMesh) {
+                           scene.remove(tube3DMesh);
+                           tube3DMesh = null;
+                       }
+                       all3DDrawingsData = [];
+                       drawingPoints = [];
 
-               alert('地形已重設！');
-           } catch (error) {
-               console.error('重設地形錯誤:', error);
-               alert('重設地形時發生錯誤！');
-           }
-        }
+                       // 重置歷史記錄
+                       terrainHistory = [];
+                       terrainHistoryIndex = -1;
+                       const newTerrainPositions = new Float32Array(terrain.geometry.attributes.position.array);
+                       terrainHistory.push({ type: 'terrain', data: newTerrainPositions, drawingIndex: -1 });
+                       terrainHistoryIndex++;
+
+                       drawingHistory = [];
+                       historyIndex = -1;
+                       saveToHistory(); // 保存空的2D繪圖歷史
+
+                       tube3DMeshHistory = [[]]; // 初始空的3D繪圖歷史
+                       tube3DMeshHistoryIndex = 0;
+
+                       alert('所有內容已重設！');
+                   } catch (error) {
+                       console.error('重設錯誤:', error);
+                       alert('重設時發生錯誤！');
+                   }
+                }
 
         // 檢查瀏覽器是否支持全屏模式
         function getFullscreenElement() {
@@ -4919,11 +5085,26 @@
                 function stopDraw() {
                     if (isDrawing) {
                         isDrawing = false;
-                        if (is3DDrawingMode && tube3DMesh) {
+                        if (is3DDrawingMode && !isErasing && drawingPoints.length >= 2 && tube3DMesh) { // Ensure tube3DMesh exists
+                            // 1. The tube3DMesh is already in the scene from the last update3DTube() call.
+                            //    Now, make it "permanent" by adding it to our main list of active meshes.
                             tube3DMeshes.push(tube3DMesh);
-                            save3DHistory();
+
+                            // 2. Store its data representation in all3DDrawingsData for saving/loading.
+                            all3DDrawingsData.push({
+                                points: drawingPoints.map(p => [p.x, p.y, p.z]),
+                                color: currentColor,
+                                lineWidth: currentLineWidth3D
+                            });
+
+                            // 3. Reset tube3DMesh for the next drawing operation (it no longer holds the "active" preview)
                             tube3DMesh = null;
+                            drawingPoints = []; // Clear points for the next line
+
+                            // 4. Save the history (which snapshots all3DDrawingsData)
+                            save3DHistory();
                         } else if (!is3DDrawingMode) {
+                            // Original 2D drawing history
                             saveToHistory();
                         }
                     }
@@ -5048,24 +5229,13 @@
                     undoBtn.addEventListener('click', () => {
                         if (is3DDrawingMode && tube3DMeshHistoryIndex > 0) {
                             tube3DMeshHistoryIndex--;
-
-                            // 清除當前場景中的所有 3D 線條
+                            // 清除當前場景中的3D線條
                             tube3DMeshes.forEach(mesh => scene.remove(mesh));
                             tube3DMeshes = [];
-
-                            // 恢復上一個狀態
-                            const previousState = tube3DMeshHistory[tube3DMeshHistoryIndex];
-                            previousState.forEach(meshData => {
-                                const mesh = new THREE.Mesh(
-                                    meshData.geometry,
-                                    meshData.material
-                                );
-                                mesh.position.copy(meshData.position);
-                                mesh.rotation.copy(meshData.rotation);
-                                mesh.scale.copy(meshData.scale);
-                                scene.add(mesh);
-                                tube3DMeshes.push(mesh);
-                            });
+                            // 從歷史記錄加載數據
+                            all3DDrawingsData = JSON.parse(JSON.stringify(tube3DMeshHistory[tube3DMeshHistoryIndex]));
+                            // 重新創建3D線條
+                            all3DDrawingsData.forEach(data => recreate3DDrawing(data)); // recreate3DDrawing 會將網格添加到 scene 和 tube3DMeshes
                         } else if (!is3DDrawingMode) {
                             // 原有的 2D 上一步邏輯
                             if (historyIndex > 0) {
@@ -5082,24 +5252,13 @@
                     redoBtn.addEventListener('click', () => {
                         if (is3DDrawingMode && tube3DMeshHistoryIndex < tube3DMeshHistory.length - 1) {
                             tube3DMeshHistoryIndex++;
-
-                            // 清除當前場景中的所有 3D 線條
+                            // 清除當前場景中的3D線條
                             tube3DMeshes.forEach(mesh => scene.remove(mesh));
                             tube3DMeshes = [];
-
-                            // 恢復下一個狀態
-                            const nextState = tube3DMeshHistory[tube3DMeshHistoryIndex];
-                            nextState.forEach(meshData => {
-                                const mesh = new THREE.Mesh(
-                                    meshData.geometry,
-                                    meshData.material
-                                );
-                                mesh.position.copy(meshData.position);
-                                mesh.rotation.copy(meshData.rotation);
-                                mesh.scale.copy(meshData.scale);
-                                scene.add(mesh);
-                                tube3DMeshes.push(mesh);
-                            });
+                            // 從歷史記錄加載數據
+                            all3DDrawingsData = JSON.parse(JSON.stringify(tube3DMeshHistory[tube3DMeshHistoryIndex]));
+                            // 重新創建3D線條
+                            all3DDrawingsData.forEach(data => recreate3DDrawing(data));
                         } else if (!is3DDrawingMode) {
                             // 原有的 2D 下一步邏輯
                             if (historyIndex < drawingHistory.length - 1) {
@@ -5119,19 +5278,19 @@
                                 // 清除所有 3D 線條
                                 tube3DMeshes.forEach(mesh => scene.remove(mesh));
                                 tube3DMeshes = [];
-                                if (tube3DMesh) {
+                                if (tube3DMesh) { // 清除正在繪製的線
                                     scene.remove(tube3DMesh);
                                     tube3DMesh = null;
                                 }
-
-                                // 更新歷史記錄
-                                save3DHistory();
+                                all3DDrawingsData = []; // 清空數據
+                                drawingPoints = []; // 清空當前點
+                                save3DHistory(); // 保存空的歷史狀態
                             } else {
                                 // 清除 2D 繪圖
                                 drawingContext.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
                                 drawingHistory = [];
                                 historyIndex = -1;
-                                saveToHistory();
+                                saveToHistory(); // 保存空的歷史狀態
                             }
                         }
                     });
@@ -5823,6 +5982,21 @@
 
                 const resetZoomBtn = document.getElementById('reset-zoom-btn');
 
+                // ---- 新增開始：禁用縮放按鈕 ----
+                if (zoomInBtn) {
+                    zoomInBtn.disabled = true;
+                    zoomInBtn.onclick = () => { console.log("放大按鈕已禁用。"); };
+                    // 或者您可以完全移除 click 事件監聽器，如果它是在這裡添加的
+                }
+                if (zoomOutBtn) {
+                    zoomOutBtn.disabled = true;
+                    zoomOutBtn.onclick = () => { console.log("縮小按鈕已禁用。"); };
+                }
+                // 注意：重設縮放按鈕 (resetZoomBtn) 仍然可以工作，因為它不改變縮放級別，只是重置。
+                // 如果也想禁用它，可以像上面那樣操作。
+                // ---- 新增結束 ----
+
+
                 // 改進放大和縮小按鈕功能
                 if (zoomInBtn) {
                   zoomInBtn.addEventListener('click', () => {
@@ -5898,7 +6072,12 @@
 
                 if (mapContainer) {
                   mapContainer.addEventListener('wheel', (e) => {
-                      e.preventDefault();
+
+                    // ---- 新增開始：禁用滾輪縮放 ----
+                                        console.log("地圖滾輪事件觸發，但縮放功能已禁用。");
+                                        e.preventDefault(); // 仍然阻止默認滾動行為
+                                        return; // 直接返回，不執行縮放邏輯
+                                        // ---- 新增結束 ----
 
                       // 確認是縮放操作而非普通滾動
                       const isZoomGesture = e.ctrlKey || Math.abs(e.deltaY) > Math.abs(e.deltaX) * 3;
@@ -7547,6 +7726,61 @@
         // 在generate2DMap函數結尾處調用
         drawDebugInfo(mapContext);
 
+        function onWindowResize() {
+            if (camera && renderer) { // 確保 camera 和 renderer 已初始化
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+
+                // 更新 2D 繪圖畫布的大小
+                if (drawingCanvas) {
+                    drawingCanvas.width = window.innerWidth;
+                    drawingCanvas.height = window.innerHeight;
+                    // 如果 2D 繪圖內容在調整大小後需要重繪，請在這裡調用 redrawCanvas()
+                    // 但如果你的 animate 循環會持續重繪，則可能不需要
+                    if (typeof redrawCanvas === 'function' && !is3DDrawingMode) { // 只在2D模式下重繪2D畫布
+                        redrawCanvas();
+                    }
+                }
+
+                // 如果處於地圖模式，也需要更新地圖相關畫布並重新生成地圖
+                if (isMapMode && mapCanvas) {
+                    const mapContainer = document.getElementById('map-container');
+                    if (mapContainer) {
+                        mapCanvas.width = mapContainer.offsetWidth;
+                        mapCanvas.height = mapContainer.offsetHeight;
+                        if (mapDrawingCanvas) {
+                            mapDrawingCanvas.width = mapCanvas.width;
+                            mapDrawingCanvas.height = mapCanvas.height;
+                        }
+                        if (highlightCanvas) {
+                            highlightCanvas.width = mapCanvas.width;
+                            highlightCanvas.height = mapCanvas.height;
+                        }
+                        if (polylineLayer) { // 確保 polylineLayer 也被調整
+                            polylineLayer.width = mapCanvas.width;
+                            polylineLayer.height = mapCanvas.height;
+                        }
+                        if (typeof generate2DMap === 'function') {
+                            generate2DMap(); // 重新生成2D地圖
+                        }
+                    }
+                }
+
+                // 更新縱剖面圖的畫布大小 (如果面板可見且其大小受視窗影響)
+                if (profilePanel && profilePanel.style.display !== 'none' && profileCanvas) {
+                    const profileContent = profilePanel.querySelector('.profile-content');
+                    if (profileContent) {
+                        profileCanvas.width = profileContent.offsetWidth;
+                        profileCanvas.height = profileContent.offsetHeight;
+                        if (typeof createProfileChart === 'function') {
+                            createProfileChart(); // 重新繪製縱剖面圖
+                        }
+                    }
+                }
+            }
+        }
+
         function animate() {
             requestAnimationFrame(animate);
             if (isMouseDown && currentTool) {
@@ -7712,18 +7946,10 @@
 
         // 修改 3D 線條的歷史記錄管理
         function save3DHistory() {
-            // 創建當前場景中所有 3D 線條的深度拷貝
-            const currentState = tube3DMeshes.map(mesh => ({
-                geometry: mesh.geometry.clone(),
-                material: mesh.material.clone(),
-                position: mesh.position.clone(),
-                rotation: mesh.rotation.clone(),
-                scale: mesh.scale.clone()
-            }));
-
-            // 清除後面的歷史記錄
+            // 清除當前索引之後的歷史記錄
             tube3DMeshHistory = tube3DMeshHistory.slice(0, tube3DMeshHistoryIndex + 1);
-            tube3DMeshHistory.push(currentState);
+            // 保存 all3DDrawingsData 的深拷貝
+            tube3DMeshHistory.push(JSON.parse(JSON.stringify(all3DDrawingsData)));
             tube3DMeshHistoryIndex++;
         }
     </script>
