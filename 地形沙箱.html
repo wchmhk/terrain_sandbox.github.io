@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -115,7 +116,7 @@
             padding: 10px;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-            display: flex; /* 保持默認開啟 */
+            display: none; /* 保持默認隱藏 */
             flex-direction: column;
             gap: 10px;
             /* width: 45px; */ /* 移除固定寬度 */
@@ -250,7 +251,7 @@
             padding: 10px;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-            display: flex;
+            display: none;
             flex-direction: column;
             gap: 10px;
             width: 45px;
@@ -390,10 +391,16 @@
         }
 
         .profile-content {
-            flex: 1;
-            padding: 10px;
-            position: relative;
-        }
+                    flex: 1;
+                    padding: 10px;
+                    position: relative;
+                    /* 關鍵修復：以下屬性確保內部 Canvas 能隨容器縮小 */
+                    min-height: 0;
+                    min-width: 0;
+                    display: flex;
+                    flex-direction: column;
+                    overflow: hidden;
+                }
 
         .profile-canvas {
             width: 100%;
@@ -756,10 +763,17 @@
         <div class="profile-info" id="profile-info">
             距離: 0m | 平均坡度: 0°
         </div>
+        <!-- 新增：垂直誇大率控制 - bottom 已改為 30px 以避免被遮擋 -->
+        <div id="profile-controls" style="position: absolute; bottom: 5px; left: 10px; z-index: 1011; background: rgba(255, 255, 255, 0.8); padding: 5px 10px; border-radius: 4px; font-size: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);">
+            <label for="vertical-exaggeration-slider" style="display: block; margin-bottom: 5px;">垂直誇大率 (<span id="exag-value">1.0</span>x):</label>
+            <input type="range" id="vertical-exaggeration-slider" min="0.1" max="5" value="1.0" step="0.1" style="width: 150px;">
+        </div>
+        <!-- 新增結束 -->
     </div>
     <!-- 添加調整大小的控制點 -->
     <div class="resize-handle" id="profile-resize-handle"></div>
 </div>
+
 
 <div class="bottom-toolbar">
     <button class="tool-button" id="terrain-btn">
@@ -1116,7 +1130,8 @@
         let isProfileMode = false;
         let profilePoints = [];
         let profileLine = null;
-        let heightMultiplier = 10; // 高度縮放因子
+        const defaultHeightScale = 10; // 固定物理高度乘數 (例如 1單位=10米)
+        let verticalExaggerationFactor = 1.0; // 新增：垂直誇大率 (使用者控制)
         let controlPoint = null; // 初始化 controlPoint
         let isProfileCalculating = false;
         let profileTimeoutId = null;
@@ -1156,8 +1171,7 @@
 
         let isDraggingSlider = false; // <--- 新增這個全域變數
 
-        let all3DDrawingsData = []; // 新增：用於存儲所有完成的3D繪圖數據
-        let currentLineWidth3D = 0.3; // 新增或修改：3D線條寬度，如果希望它是可配置的
+        const heightMultiplier = 10; // <--- 全局定義高度倍數，修復未定義錯誤
 
         // --- 新增：儲存自訂圖標 Base64 字串 ---
         const customMarkerIcons = {
@@ -1479,14 +1493,32 @@
 
             // 判斷是否為多指觸摸（縮放手勢）
             if (e.touches.length === 2) {
-                // 雙指觸控 - 禁用縮放
-                isPinching = false;    // 關鍵：確保 isPinching 為 false
-                isDraggingMap = false; // 同時禁用雙指拖動，以避免意外行為
-                console.log("雙指觸控偵測到，但縮放功能已禁用。");
-                // 移除了原本用於初始化縮放的變量設置代碼
+                const touch1 = e.touches[0];
+                const touch2 = e.touches[1];
+
+                // 記錄初始兩指位置和距離
+                touchStartX = touch1.clientX;
+                touchStartY = touch1.clientY;
+                touch2StartX = touch2.clientX;
+                touch2StartY = touch2.clientY;
+
+                // 記錄縮放中心點 - 添加這個
+                pinchStartCenter = {
+                    x: (touch1.clientX + touch2.clientX) / 2,
+                    y: (touch1.clientY + touch2.clientY) / 2
+                };
+
+                pinchStartDistance = Math.hypot(
+                    touch1.clientX - touch2.clientX,
+                    touch1.clientY - touch2.clientY
+                );
+
+                initialScale = currentScale;
+                isPinching = true;
+                isDraggingMap = false;
+                scalingChanged = false; // 重置縮放變更標記
             }
             else if (e.touches.length === 1) {
-
                 // 單指觸摸 - 拖拽模式
                 const touch = e.touches[0];
                 touchStartX = touch.clientX;
@@ -2524,11 +2556,10 @@
                 // 取消之前的計時器
                 if (resizeTimer) clearTimeout(resizeTimer);
 
-                // 設置新計時器 - 減少重繪頻率但提高響應性
+                // 設置新計時器 - 稍微降低延遲以獲得更流暢的重繪
                 resizeTimer = setTimeout(() => {
-                    // 簡單調整畫布大小，無需重新創建
                     updateProfileCanvasSize();
-                }, 100);
+                }, 50);
             }
 
             // 結束調整大小
@@ -2553,7 +2584,7 @@
             document.addEventListener('mousemove', handleMouseMove);
             document.addEventListener('mouseup', endResize);
 
-            // 更新畫布大小並重繪的函數 - 較溫和的方法
+            // 更新畫布大小並重繪的函數 - 移除錯誤的賦值邏輯
             function updateProfileCanvasSize() {
                 try {
                     const profileContent = profilePanel.querySelector('.profile-content');
@@ -2567,54 +2598,29 @@
                     const contentHeight = profileContent.offsetHeight;
 
                     if (contentWidth <= 0 || contentHeight <= 0) {
-                        console.warn("內容區尺寸無效:", contentWidth, "x", contentHeight);
                         return;
                     }
 
-                    console.log("更新畫布尺寸:", contentWidth, "x", contentHeight);
-
-                    // 1. 先保存當前的畫布內容（如果需要）
-                    let tempCanvas = null;
-                    try {
-                        if (profileCtx && profileCanvas.width > 0 && profileCanvas.height > 0) {
-                            tempCanvas = document.createElement('canvas');
-                            tempCanvas.width = profileCanvas.width;
-                            tempCanvas.height = profileCanvas.height;
-                            tempCanvas.getContext('2d').drawImage(profileCanvas, 0, 0);
-                        }
-                    } catch (e) {
-                        console.warn("無法保存當前畫布內容:", e);
-                    }
-
-                    // 2. 更新畫布的尺寸
+                    // 1. 更新畫布的尺寸 (這會自動清除畫布內容)
                     profileCanvas.width = contentWidth;
                     profileCanvas.height = contentHeight;
 
-                    // 3. 重新取得繪圖上下文（因為改變尺寸會重置上下文）
-                    profileCtx = profileCanvas.getContext('2d');
-
-                    // 4. 重新繪製縱剖面圖
+                    // 2. 重新繪製縱剖面圖
+                    // 注意：不需要在這裡重新賦值 profileCtx，因為 createProfileChart 內部會自動獲取上下文。
+                    // 而且 profileCtx 即使是 let 也最好不要頻繁切換引用。
                     try {
                         if (typeof createProfileChart === 'function') {
-                            createProfileChart();
-                        } else {
-                            console.error("找不到createProfileChart函數");
-                            // 如果找不到繪圖函數但有暫存的畫布，則還原暫存內容
-                            if (tempCanvas) {
-                                profileCtx.drawImage(tempCanvas, 0, 0, contentWidth, contentHeight);
+                            // 只有當有點數據時才繪製
+                            if (typeof profilePoints !== 'undefined' && profilePoints.length === 2) {
+                                createProfileChart();
                             }
                         }
                     } catch (drawError) {
                         console.error("繪製縱剖面圖失敗:", drawError);
-                        // 還原暫存內容
-                        if (tempCanvas) {
-                            profileCtx.drawImage(tempCanvas, 0, 0, contentWidth, contentHeight);
-                        }
                     }
 
-                    console.log("縱剖面畫布更新完成");
                 } catch (error) {
-                    console.error("更新縱剖面畫布時發生錯誤:", error, error.stack);
+                    console.error("更新縱剖面畫布時發生錯誤:", error);
                 }
             }
 
@@ -2660,7 +2666,7 @@
                 // 設置新計時器
                 resizeTimer = setTimeout(() => {
                     updateProfileCanvasSize();
-                }, 100);
+                }, 50);
             }, { passive: false });
 
             document.addEventListener('touchend', endResize);
@@ -2669,7 +2675,27 @@
             console.log("已啟用改進版縱剖面視窗調整大小功能");
         }
 
-        // 2. 完全重寫 createProfileChart 函數，確保Y軸正確縮放
+
+        function niceNum(range, round) {
+            const exponent = Math.floor(Math.log10(range));
+            const fraction = range / Math.pow(10, exponent);
+            let niceFraction;
+
+            if (round) {
+                if (fraction < 1.5) niceFraction = 1;
+                else if (fraction < 3) niceFraction = 2;
+                else if (fraction < 7) niceFraction = 5;
+                else niceFraction = 10;
+            } else {
+                if (fraction <= 1) niceFraction = 1;
+                else if (fraction <= 2) niceFraction = 2;
+                else if (fraction <= 5) niceFraction = 5;
+                else niceFraction = 10;
+            }
+
+            return niceFraction * Math.pow(10, exponent);
+        }
+
         function createProfileChart() {
             try {
                 if (profilePoints.length !== 2) {
@@ -2679,7 +2705,7 @@
 
                 // 獲取畫布和上下文
                 const canvas = profileCanvas;
-                const ctx = profileCtx;
+                const ctx = canvas.getContext('2d'); // 始終獲取最新的上下文
 
                 if (!canvas || !ctx) {
                     console.error("找不到縱剖面畫布或繪圖上下文");
@@ -2702,7 +2728,8 @@
                 // 確保最小邊距
                 margin.top = Math.max(20, margin.top);
                 margin.right = Math.max(20, margin.right);
-                margin.bottom = Math.max(40, margin.bottom);
+                // 為了容納誇大率滑桿，底部邊距要更大
+                margin.bottom = Math.max(70, Math.round(canvas.height * 0.25));
                 margin.left = Math.max(60, margin.left);
 
                 // 計算實際繪圖區域
@@ -2714,13 +2741,25 @@
                     return;
                 }
 
+                // 更新全局邊界資訊給滑鼠高亮效果使用
+                if (window.updateProfilePlotBounds) {
+                    window.updateProfilePlotBounds(margin);
+                }
+
+                // --- 核心修復開始 ---
                 // 獲取地形數據
                 const positions = terrain.geometry.attributes.position.array;
-                const gridSize = Math.sqrt(positions.length / 3);
+
+                // 計算正確的網格頂點寬度 (Vertex Width)
+                // 對於 100x100 的分段，頂點數是 101x101，數組長度/3 開根號即為寬度
+                const vertexWidth = Math.sqrt(positions.length / 3);
 
                 // 收集高度樣本
-                const samples = 100;
+                const samples = 100; // 採樣點數量
                 const samplePoints = [];
+
+                // 確保高度倍數與地圖顯示一致 (通常地圖用 10 倍)
+                const heightScale = typeof heightMultiplier !== 'undefined' ? heightMultiplier : 10;
 
                 for (let i = 0; i < samples; i++) {
                     const t = i / (samples - 1);
@@ -2729,151 +2768,178 @@
                     const gridX = profilePoints[0].gridX + t * (profilePoints[1].gridX - profilePoints[0].gridX);
                     const gridY = profilePoints[0].gridY + t * (profilePoints[1].gridY - profilePoints[0].gridY);
 
-                    // 獲取高度
-                    const height = bilinearInterpolate(positions, gridSize, gridX, gridY) * heightMultiplier;
+                    // 獲取高度 (修復：傳入正確的 vertexWidth，不要 +1)
+                    const height = bilinearInterpolate(positions, vertexWidth, gridX, gridY) * heightScale;
 
-                    // 計算距離
+                    // 計算距離 (假設 1 網格單位 = 1 米)
                     const totalDistance = Math.sqrt(
                         Math.pow(profilePoints[1].gridX - profilePoints[0].gridX, 2) +
                         Math.pow(profilePoints[1].gridY - profilePoints[0].gridY, 2)
-                    ) * (100 / 100); // 縮放到實際地形尺寸
+                    );
 
                     samplePoints.push({
                         distance: t * totalDistance,
                         height: height
                     });
                 }
+                // --- 核心修復結束 ---
 
                 // 找出高度範圍
-                let minHeight = Math.min(...samplePoints.map(p => p.height));
-                let maxHeight = Math.max(...samplePoints.map(p => p.height));
+                let rawMinHeight = Math.min(...samplePoints.map(p => p.height));
+                let rawMaxHeight = Math.max(...samplePoints.map(p => p.height));
+
+                // 如果高度完全一致（平地），人為製造一點範圍以免出錯
+                if (rawMaxHeight === rawMinHeight) {
+                    rawMaxHeight += 0.1;
+                    rawMinHeight -= 0.1;
+                }
 
                 // 調整高度範圍，確保良好的視覺效果
-                const heightRange = maxHeight - minHeight;
-                if (heightRange < 10) {
-                    // 高度範圍太小，擴大範圍
-                    const mid = (maxHeight + minHeight) / 2;
-                    minHeight = mid - 5;
-                    maxHeight = mid + 5;
-                } else {
-                    // 添加上下緩衝空間
-                    const buffer = heightRange * 0.1;
-                    minHeight -= buffer;
-                    maxHeight += buffer;
+                let minHeight = rawMinHeight;
+                let maxHeight = rawMaxHeight;
+                const heightRange = rawMaxHeight - rawMinHeight;
+
+                // ===== Y 軸刻度優化 =====
+                const maxTicks = Math.min(10, Math.max(5, Math.floor(plotHeight / 40)));
+                let tickInterval = niceNum(heightRange / maxTicks, true);
+
+                // 處理平坦或範圍過小的極端情況
+                if (heightRange < 1 || tickInterval < 0.1) {
+                     tickInterval = niceNum(heightRange > 0 ? heightRange : 1, true) / (heightRange > 5 ? 2 : 5);
+                     if (tickInterval === 0) tickInterval = 0.1;
                 }
 
-                // 計算縱剖面數據
-                const totalDistance = samplePoints[samplePoints.length - 1].distance;
-                const heightDifference = Math.abs(samplePoints[samplePoints.length - 1].height - samplePoints[0].height);
-                const averageSlope = Math.atan(heightDifference / (totalDistance || 1)) * (180 / Math.PI);
+                // 確定 Y 軸的繪圖上下界
+                minHeight = Math.floor(rawMinHeight / tickInterval) * tickInterval;
+                maxHeight = Math.ceil(rawMaxHeight / tickInterval) * tickInterval;
+
+                // 確保有足夠的上下空間
+                if (minHeight === maxHeight) {
+                    minHeight -= tickInterval;
+                    maxHeight += tickInterval;
+                }
+
+                // 應用垂直誇大率到繪圖高度
+                const plotRangeActual = maxHeight - minHeight;
+                const plotHeightExaggerated = plotHeight * verticalExaggerationFactor;
+
+                // 計算縱剖面數據統計
+                const totalLineDistance = samplePoints[samples - 1].distance;
+                // 計算真實點對點距離來算坡度，避免除以0
+                const distDiff = Math.abs(samplePoints[samples-1].distance - samplePoints[0].distance);
+                const heightDiff = samplePoints[samples - 1].height - samplePoints[0].height;
+                // 坡度計算：高度差 / 水平距離
+                const averageSlope = distDiff > 0.01 ?
+                    (Math.atan(Math.abs(heightDiff) / distDiff) * (180 / Math.PI)) : 0;
 
                 // 更新信息面板
-                const profileInfo = document.getElementById('profile-info');
                 if (profileInfo) {
-                    profileInfo.textContent = `距離: ${totalDistance.toFixed(1)}m | 平均坡度: ${averageSlope.toFixed(1)}°`;
+                    profileInfo.textContent = `距離: ${totalLineDistance.toFixed(1)}m | 平均坡度: ${averageSlope.toFixed(1)}°`;
                 }
 
-                // 繪製背景
+                // 繪製背景和邊框
                 ctx.fillStyle = '#f5f5f5';
                 ctx.fillRect(margin.left, margin.top, plotWidth, plotHeight);
-
-                // 繪製邊框
                 ctx.strokeStyle = '#ccc';
                 ctx.lineWidth = 1;
                 ctx.strokeRect(margin.left, margin.top, plotWidth, plotHeight);
 
-                // 轉換資料點為畫布坐標
+                // 轉換資料點為畫布坐標 (應用誇大率)
                 const points = samplePoints.map(p => ({
-                    x: margin.left + (p.distance / totalDistance) * plotWidth,
-                    y: margin.top + plotHeight - ((p.height - minHeight) / (maxHeight - minHeight)) * plotHeight
+                    x: margin.left + (p.distance / totalLineDistance) * plotWidth,
+                    // 應用誇大率到Y座標計算，基準線在底部
+                    y: margin.top + plotHeight - ((p.height - minHeight) / plotRangeActual) * plotHeightExaggerated
                 }));
 
-                // ===== 開始繪製坐標軸和刻度 =====
+                // ===== 繪製坐標軸和刻度 =====
+                const labelFontSize = Math.max(10, Math.min(14, plotWidth * 0.02));
 
-                // X軸
+                // X軸 (保持在底部邊界)
                 ctx.beginPath();
-                ctx.moveTo(margin.left, margin.top + plotHeight);
-                ctx.lineTo(margin.left + plotWidth, margin.top + plotHeight);
+                ctx.moveTo(margin.left, canvas.height - margin.bottom);
+                ctx.lineTo(margin.left + plotWidth, canvas.height - margin.bottom);
                 ctx.strokeStyle = '#000';
                 ctx.lineWidth = 1;
                 ctx.stroke();
 
-                // Y軸
+                // Y軸 (保持在左側邊界)
                 ctx.beginPath();
                 ctx.moveTo(margin.left, margin.top);
-                ctx.lineTo(margin.left, margin.top + plotHeight);
+                ctx.lineTo(margin.left, canvas.height - margin.bottom);
                 ctx.stroke();
 
                 // X軸刻度
                 const xTickCount = Math.min(10, Math.max(5, Math.floor(plotWidth / 80)));
-                const xTickInterval = Math.ceil(totalDistance / xTickCount);
+                let xTickInterval = niceNum(totalLineDistance / xTickCount, true);
+                if (xTickInterval <= 0) xTickInterval = totalLineDistance > 0 ? totalLineDistance : 1;
+
+                const xLabelPrecision = totalLineDistance < 20 ? 1 : 0;
 
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'top';
                 ctx.fillStyle = '#000';
-                ctx.font = `${Math.max(10, Math.min(14, plotWidth * 0.02))}px Arial`;
+                ctx.font = `${labelFontSize}px Arial`;
 
-                for (let d = 0; d <= totalDistance; d += xTickInterval) {
-                    const x = margin.left + (d / totalDistance) * plotWidth;
+                for (let d = 0; d <= totalLineDistance * 1.01; d += xTickInterval) {
+                    const x = margin.left + (d / totalLineDistance) * plotWidth;
+                    if (x > margin.left + plotWidth + 1) continue;
 
-                    // 刻度線
                     ctx.beginPath();
-                    ctx.moveTo(x, margin.top + plotHeight);
-                    ctx.lineTo(x, margin.top + plotHeight + 5);
+                    ctx.moveTo(x, canvas.height - margin.bottom);
+                    ctx.lineTo(x, canvas.height - margin.bottom + 5);
                     ctx.stroke();
+                    ctx.fillText(`${d.toFixed(xLabelPrecision)}m`, x, canvas.height - margin.bottom + 8);
 
-                    // 刻度標籤
-                    ctx.fillText(`${d}m`, x, margin.top + plotHeight + 8);
+                    // 繪製背景網格線
+                    ctx.beginPath();
+                    ctx.strokeStyle = '#ddd';
+                    ctx.moveTo(x, margin.top);
+                    ctx.lineTo(x, canvas.height - margin.bottom);
+                    ctx.stroke();
+                    ctx.strokeStyle = '#000';
                 }
 
                 // Y軸刻度
-                const yTickCount = Math.min(10, Math.max(5, Math.floor(plotHeight / 40)));
-                const yTickRange = maxHeight - minHeight;
-                const yTickInterval = Math.ceil(yTickRange / yTickCount);
-
                 ctx.textAlign = 'right';
                 ctx.textBaseline = 'middle';
+                const yLabelPrecision = tickInterval < 1 ? 1 : 0;
 
-                // 收集所有要繪製的高度值
-                const heightTicks = [];
-                for (let h = Math.floor(minHeight / yTickInterval) * yTickInterval;
-                     h <= Math.ceil(maxHeight / yTickInterval) * yTickInterval;
-                     h += yTickInterval) {
-                    heightTicks.push(h);
-                }
+                // 為了防止浮點數精度問題，使用小一點的增量誤差檢查
+                const epsilon = tickInterval * 0.001;
 
-                // 繪製每個高度刻度
-                heightTicks.forEach(height => {
-                    // 計算Y坐標 - 這是關鍵計算
-                    const normalizedHeight = (height - minHeight) / yTickRange;
-                    const y = margin.top + plotHeight - (normalizedHeight * plotHeight);
+                for (let h = minHeight; h <= maxHeight + epsilon; h += tickInterval) {
+                    // 確保在範圍內
+                    if (h < minHeight - epsilon) continue;
 
-                    // 刻度線
+                    const normalizedHeight = (h - minHeight) / plotRangeActual;
+                    // 計算 Y 軸位置
+                    const y = margin.top + plotHeight - (normalizedHeight * plotHeightExaggerated);
+
+                    // 繪製刻度
                     ctx.beginPath();
                     ctx.moveTo(margin.left - 5, y);
                     ctx.lineTo(margin.left, y);
                     ctx.stroke();
 
-                    // 刻度標籤
-                    ctx.fillText(`${height.toFixed(0)}m`, margin.left - 8, y);
+                    // 繪製標籤
+                    ctx.fillText(`${h.toFixed(yLabelPrecision)}m`, margin.left - 8, y);
 
-                    // 網格線
-                    ctx.beginPath();
-                    ctx.strokeStyle = '#ddd';
-                    ctx.moveTo(margin.left, y);
-                    ctx.lineTo(margin.left + plotWidth, y);
-                    ctx.stroke();
-                    ctx.strokeStyle = '#000'; // 重置顏色
-                });
+                    // 繪製背景網格線 (如果位置在繪圖區內)
+                    if (y >= margin.top && y <= canvas.height - margin.bottom) {
+                        ctx.beginPath();
+                        ctx.strokeStyle = '#ddd';
+                        ctx.moveTo(margin.left, y);
+                        ctx.lineTo(margin.left + plotWidth, y);
+                        ctx.stroke();
+                        ctx.strokeStyle = '#000';
+                    }
+                }
 
                 // 軸標題
-                // X軸標題
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'top';
                 ctx.font = `${Math.max(12, Math.min(16, plotWidth * 0.03))}px Arial`;
-                ctx.fillText('距離 (m)', margin.left + plotWidth / 2, margin.top + plotHeight + 30);
-
-                // Y軸標題
+                ctx.fillText('距離 (m)', margin.left + plotWidth / 2, canvas.height - margin.bottom + 30);
                 ctx.save();
                 ctx.translate(margin.left - 40, margin.top + plotHeight / 2);
                 ctx.rotate(-Math.PI / 2);
@@ -2884,71 +2950,65 @@
 
                 // ===== 繪製地形曲線 =====
 
-                // 繪製線條
+                // 為了裁剪超出繪圖區的部分（當誇大率很高時）
+                ctx.save();
                 ctx.beginPath();
-                ctx.moveTo(points[0].x, points[0].y);
+                ctx.rect(margin.left, margin.top, plotWidth, plotHeight);
+                ctx.clip();
 
-                for (let i = 1; i < points.length; i++) {
-                    ctx.lineTo(points[i].x, points[i].y);
+                // 繪製填充區域
+                if (points.length > 0) {
+                    ctx.beginPath();
+                    ctx.moveTo(points[0].x, points[0].y);
+
+                    for (let i = 1; i < points.length; i++) {
+                        ctx.lineTo(points[i].x, points[i].y);
+                    }
+
+                    // 填充到底部
+                    ctx.lineTo(points[points.length - 1].x, canvas.height - margin.bottom);
+                    ctx.lineTo(points[0].x, canvas.height - margin.bottom);
+                    ctx.closePath();
+
+                    ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
+                    ctx.fill();
+
+                    // 繪製線條
+                    ctx.beginPath();
+                    ctx.moveTo(points[0].x, points[0].y);
+                    for (let i = 1; i < points.length; i++) {
+                        ctx.lineTo(points[i].x, points[i].y);
+                    }
+                    ctx.strokeStyle = '#ff0000';
+                    ctx.lineWidth = Math.max(2, plotHeight * 0.008);
+                    ctx.stroke();
                 }
 
-                ctx.strokeStyle = '#ff0000';
-                ctx.lineWidth = Math.max(2, plotHeight * 0.008);
-                ctx.stroke();
+                ctx.restore(); // 結束裁剪
 
-                // 填充區域
-                ctx.beginPath();
-                ctx.moveTo(points[0].x, points[0].y);
+                // 繪製端點 (如果有)
+                if (points.length > 0) {
+                    const pointRadius = Math.max(4, Math.min(8, plotHeight * 0.02));
 
-                for (let i = 1; i < points.length; i++) {
-                    ctx.lineTo(points[i].x, points[i].y);
+                    // 限制點的 Y 坐標在繪圖區內，避免畫到外面
+                    const clampY = (y) => Math.max(margin.top, Math.min(canvas.height - margin.bottom, y));
+
+                    // 起點 (綠色)
+                    ctx.beginPath();
+                    ctx.arc(points[0].x, clampY(points[0].y), pointRadius, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#00ff00';
+                    ctx.fill();
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+
+                    // 終點 (紅色)
+                    ctx.beginPath();
+                    ctx.arc(points[points.length - 1].x, clampY(points[points.length - 1].y), pointRadius, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#ff0000';
+                    ctx.fill();
+                    ctx.stroke();
                 }
-
-                ctx.lineTo(points[points.length - 1].x, margin.top + plotHeight);
-                ctx.lineTo(points[0].x, margin.top + plotHeight);
-                ctx.closePath();
-
-                ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
-                ctx.fill();
-
-                // 繪製端點
-                const pointRadius = Math.max(4, Math.min(8, plotHeight * 0.02));
-
-                // 起點 (綠色)
-                ctx.beginPath();
-                ctx.arc(points[0].x, points[0].y, pointRadius, 0, 2 * Math.PI);
-                ctx.fillStyle = '#00ff00';
-                ctx.fill();
-                ctx.strokeStyle = '#000';
-                ctx.lineWidth = 1;
-                ctx.stroke();
-
-                // 終點 (紅色)
-                ctx.beginPath();
-                ctx.arc(points[points.length - 1].x, points[points.length - 1].y, pointRadius, 0, 2 * Math.PI);
-                ctx.fillStyle = '#ff0000';
-                ctx.fill();
-                ctx.stroke();
-
-                // 添加端點高度標籤
-                ctx.font = `${Math.max(10, Math.min(14, plotWidth * 0.025))}px Arial`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'bottom';
-                ctx.fillStyle = '#000';
-
-                // 起點高度標籤
-                ctx.fillText(
-                    `${samplePoints[0].height.toFixed(1)}m`,
-                    points[0].x,
-                    points[0].y - pointRadius - 3
-                );
-
-                // 終點高度標籤
-                ctx.fillText(
-                    `${samplePoints[samplePoints.length - 1].height.toFixed(1)}m`,
-                    points[points.length - 1].x,
-                    points[points.length - 1].y - pointRadius - 3
-                );
 
                 console.log("縱剖面圖完成繪製");
             } catch (error) {
@@ -3350,216 +3410,308 @@
         }
 
         function initEventListeners() {
-            try {
-                const fileInput = document.getElementById('file-input');
-                if (fileInput) {
-                    fileInput.addEventListener('change', loadTerrain);
-                    console.log("File input change listener added.");
-                } else {
-                    console.error("找不到 file-input 元素！");
-                }
-
-                // --- 地形工具按鈕事件監聽 (工具選擇) ---
-                document.querySelectorAll('.terrain-toolbar .tool-button[data-tool]').forEach(button => {
-                    button.addEventListener('click', () => {
-                        if (currentTool === button.dataset.tool) {
-                            currentTool = null;
-                            button.classList.remove('active');
-                            controls.enabled = true;
-                            if (radiusIndicator) radiusIndicator.visible = false;
-                            if (mouseHelper) mouseHelper.visible = false;
-                            if (drawingCanvas) drawingCanvas.style.pointerEvents = 'none';
-                            return;
+                    try {
+                        const fileInput = document.getElementById('file-input');
+                        if (fileInput) {
+                            fileInput.addEventListener('change', loadTerrain);
+                            console.log("File input change listener added.");
+                        } else {
+                            console.error("找不到 file-input 元素！");
                         }
-                        resetTerrainTools();
-                        currentTool = button.dataset.tool;
-                        button.classList.add('active');
-                        controls.enabled = false;
-                        if (drawingCanvas) drawingCanvas.style.pointerEvents = 'none';
-                    });
-                });
 
-                // --- 標註按鈕事件監聽 ---
-                const addMarkerBtn = document.getElementById('addMarkerBtn');
-                if (addMarkerBtn) {
-                    addMarkerBtn.addEventListener('click', () => {
-                        console.log('標註按鈕被點擊');
-                        resetTerrainTools();
-                        currentTool = 'addMarker';
-                        console.log('currentTool 設置為:', currentTool);
-                        controls.enabled = false;
-                        if (drawingCanvas) drawingCanvas.style.pointerEvents = 'none';
-                        renderer.domElement.style.cursor = 'crosshair';
-                        if (isMobile) {
-                            alert('請點擊地圖位置來添加標記');
+                        // --- 地形工具按鈕事件監聽 (工具選擇) ---
+                        document.querySelectorAll('.terrain-toolbar .tool-button[data-tool]').forEach(button => {
+                            button.addEventListener('click', () => {
+                                if (currentTool === button.dataset.tool) {
+                                    currentTool = null;
+                                    button.classList.remove('active');
+                                    controls.enabled = true;
+                                    if (radiusIndicator) radiusIndicator.visible = false;
+                                    if (mouseHelper) mouseHelper.visible = false;
+                                    if (drawingCanvas) drawingCanvas.style.pointerEvents = 'none';
+                                    return;
+                                }
+                                resetTerrainTools();
+                                currentTool = button.dataset.tool;
+                                button.classList.add('active');
+                                controls.enabled = false;
+                                if (drawingCanvas) drawingCanvas.style.pointerEvents = 'none';
+                            });
+                        });
+
+                        // --- 標註按鈕事件監聽 ---
+                        const addMarkerBtn = document.getElementById('addMarkerBtn');
+                        if (addMarkerBtn) {
+                            addMarkerBtn.addEventListener('click', () => {
+                                console.log('標註按鈕被點擊');
+                                resetTerrainTools();
+                                currentTool = 'addMarker';
+                                console.log('currentTool 設置為:', currentTool);
+                                controls.enabled = false;
+                                if (drawingCanvas) drawingCanvas.style.pointerEvents = 'none';
+                                renderer.domElement.style.cursor = 'crosshair';
+                                if (isMobile) {
+                                    alert('請點擊地圖位置來添加標記');
+                                }
+                            });
                         }
-                    });
-                }
 
-                // --- 渲染容器的 Pointer/Touch 事件 (3D場景交互) ---
-                let renderContainer = renderer.domElement;
-                renderContainer.addEventListener('pointerdown', onMouseDown);
-                renderContainer.addEventListener('pointermove', onMouseMove);
-                renderContainer.addEventListener('pointerup', onMouseUp);
-                renderContainer.addEventListener('touchstart', onTouchStart, { passive: false });
-                renderContainer.addEventListener('touchmove', function(event) {
-                    // --- 修改：檢查目標是否為任何 range input ---
-                    if (event.target.type === 'range') {
-                        isDraggingSlider = true; // 標記正在拖動滑桿
-                        updateStatusBar(event); // 仍然更新狀態欄
-                        return; // 允許瀏覽器處理滑桿的預設觸控拖曳
-                    }
-                    // --- 修改結束 ---
-                    if (isDraggingSlider) { // 確保 touchstart 後立即移動也正確處理
-                        updateStatusBar(event);
-                        return;
-                    }
-                    event.preventDefault(); // 阻止 3D 場景交互的預設行為
-                    onTouchMove(event);
-                }, { passive: false });
-                renderContainer.addEventListener('touchend', onTouchEnd);
-                renderContainer.addEventListener('touchcancel', onTouchEnd);
-
-                // --- 為所有滑桿添加觸控事件監聽器 (包括新的和舊的) ---
-                document.querySelectorAll('input[type="range"]').forEach(slider => {
-                    slider.addEventListener('touchstart', (e) => {
-                        isDraggingSlider = true;
-                        // 阻止冒泡到 renderContainer
-                        e.stopPropagation();
-                    }, { passive: true });
-                });
-                // --- 結束 ---
-
-                // --- 在 document 上監聽 touchend/touchcancel 以重置標誌 ---
-                document.addEventListener('touchend', () => { isDraggingSlider = false; });
-                document.addEventListener('touchcancel', () => { isDraggingSlider = false; });
-                // --- 結束 ---
-
-                // --- 系統按鈕事件 (底部系統菜單) ---
-                const newSaveBtn = document.getElementById('new-save-btn');
-                if (newSaveBtn) { newSaveBtn.addEventListener('click', () => { saveTerrain(); hideSystemToolbar(); }); }
-
-                const newLoadBtn = document.getElementById('new-load-btn');
-                if (newLoadBtn && fileInput) {
-                    newLoadBtn.addEventListener('click', () => { fileInput.click(); hideSystemToolbar(); });
-                } else { /* 錯誤處理 */ }
-
-                const newResetBtn = document.getElementById('new-reset-btn');
-                if (newResetBtn) { newResetBtn.addEventListener('click', () => { resetTerrain(); hideSystemToolbar(); }); }
-
-                const newSettingsBtn = document.getElementById('new-settings-btn');
-                if (newSettingsBtn) {
-                    newSettingsBtn.addEventListener('click', () => {
-                        const panel = document.querySelector('.settings-panel');
-                        panel.classList.toggle('show');
-                        hideSystemToolbar();
-                    });
-                }
-
-                const newFullscreenBtn = document.getElementById('new-fullscreen-btn');
-                if (newFullscreenBtn) {
-                    if (typeof toggleFullscreen === 'function') {
-                         newFullscreenBtn.addEventListener('click', () => { toggleFullscreen(); hideSystemToolbar(); });
-                    } else { console.error('toggleFullscreen function not found!'); }
-                }
-                // --- 系統按鈕結束 ---
-
-                // --- 地形歷史記錄按鈕 ---
-                const terrainUndoBtn = document.getElementById('terrain-undo-btn');
-                if (terrainUndoBtn) {
-                    terrainUndoBtn.addEventListener('click', () => {
-                         if (terrainHistoryIndex > 0) {
-                            terrainHistoryIndex--;
-                            if (terrainHistory[terrainHistoryIndex]?.data) {
-                                const positions = terrain.geometry.attributes.position.array;
-                                const savedPositions = terrainHistory[terrainHistoryIndex].data;
-                                for (let i = 0; i < positions.length; i++) { positions[i] = savedPositions[i]; }
-                                terrain.geometry.attributes.position.needsUpdate = true;
-                                terrain.geometry.computeVertexNormals(); updateTerrainMaterial();
+                        // --- 渲染容器的 Pointer/Touch 事件 (3D場景交互) ---
+                        let renderContainer = renderer.domElement;
+                        renderContainer.addEventListener('pointerdown', onMouseDown);
+                        renderContainer.addEventListener('pointermove', onMouseMove);
+                        renderContainer.addEventListener('pointerup', onMouseUp);
+                        renderContainer.addEventListener('touchstart', onTouchStart, { passive: false });
+                        renderContainer.addEventListener('touchmove', function(event) {
+                            // --- 修改：檢查目標是否為任何 range input ---
+                            if (event.target.type === 'range') {
+                                isDraggingSlider = true; // 標記正在拖動滑桿
+                                updateStatusBar(event); // 仍然更新狀態欄
+                                return; // 允許瀏覽器處理滑桿的預設觸控拖曳
                             }
-                        }
-                    });
-                }
-                const terrainRedoBtn = document.getElementById('terrain-redo-btn');
-                if (terrainRedoBtn) {
-                    terrainRedoBtn.addEventListener('click', () => {
-                        if (terrainHistoryIndex < terrainHistory.length - 1) {
-                            terrainHistoryIndex++;
-                             if (terrainHistory[terrainHistoryIndex]?.data) {
-                                const positions = terrain.geometry.attributes.position.array;
-                                const savedPositions = terrainHistory[terrainHistoryIndex].data;
-                                for (let i = 0; i < positions.length; i++) { positions[i] = savedPositions[i]; }
-                                terrain.geometry.attributes.position.needsUpdate = true;
-                                terrain.geometry.computeVertexNormals(); updateTerrainMaterial();
+                            // --- 修改結束 ---
+                            if (isDraggingSlider) { // 確保 touchstart 後立即移動也正確處理
+                                updateStatusBar(event);
+                                return;
                             }
+                            event.preventDefault(); // 阻止 3D 場景交互的預設行為
+                            onTouchMove(event);
+                        }, { passive: false });
+                        renderContainer.addEventListener('touchend', onTouchEnd);
+                        renderContainer.addEventListener('touchcancel', onTouchEnd);
+
+                        // --- 為所有滑桿添加觸控事件監聽器 (包括新的和舊的) ---
+                        document.querySelectorAll('input[type="range"]').forEach(slider => {
+                            slider.addEventListener('touchstart', (e) => {
+                                isDraggingSlider = true;
+                                // 阻止冒泡到 renderContainer
+                                e.stopPropagation();
+                            }, { passive: true });
+                        });
+                        // --- 結束 ---
+
+                        // --- 在 document 上監聽 touchend/touchcancel 以重置標誌 ---
+                        document.addEventListener('touchend', () => { isDraggingSlider = false; });
+                        document.addEventListener('touchcancel', () => { isDraggingSlider = false; });
+                        // --- 結束 ---
+
+                        // --- 系統按鈕事件 (底部系統菜單) ---
+                        const newSaveBtn = document.getElementById('new-save-btn');
+                        if (newSaveBtn) { newSaveBtn.addEventListener('click', () => { saveTerrain(); hideSystemToolbar(); }); }
+
+                        const newLoadBtn = document.getElementById('new-load-btn');
+                        if (newLoadBtn && fileInput) {
+                            newLoadBtn.addEventListener('click', () => { fileInput.click(); hideSystemToolbar(); });
+                        } else { /* 錯誤處理 */ }
+
+                        const newResetBtn = document.getElementById('new-reset-btn');
+                        if (newResetBtn) { newResetBtn.addEventListener('click', () => { resetTerrain(); hideSystemToolbar(); }); }
+
+                        const newSettingsBtn = document.getElementById('new-settings-btn');
+                        if (newSettingsBtn) {
+                            newSettingsBtn.addEventListener('click', () => {
+                                const panel = document.querySelector('.settings-panel');
+                                panel.classList.toggle('show');
+                                hideSystemToolbar();
+                            });
                         }
-                    });
+
+                        const newFullscreenBtn = document.getElementById('new-fullscreen-btn');
+                        if (newFullscreenBtn) {
+                            if (typeof toggleFullscreen === 'function') {
+                                 newFullscreenBtn.addEventListener('click', () => { toggleFullscreen(); hideSystemToolbar(); });
+                            } else { console.error('toggleFullscreen function not found!'); }
+                        }
+                        // --- 系統按鈕結束 ---
+
+                        // --- 地形歷史記錄按鈕 ---
+                        const terrainUndoBtn = document.getElementById('terrain-undo-btn');
+                        if (terrainUndoBtn) {
+                            terrainUndoBtn.addEventListener('click', () => {
+                                 if (terrainHistoryIndex > 0) {
+                                    terrainHistoryIndex--;
+                                    if (terrainHistory[terrainHistoryIndex]?.data) {
+                                        const positions = terrain.geometry.attributes.position.array;
+                                        const savedPositions = terrainHistory[terrainHistoryIndex].data;
+                                        for (let i = 0; i < positions.length; i++) { positions[i] = savedPositions[i]; }
+                                        terrain.geometry.attributes.position.needsUpdate = true;
+                                        terrain.geometry.computeVertexNormals(); updateTerrainMaterial();
+                                    }
+                                }
+                            });
+                        }
+                        const terrainRedoBtn = document.getElementById('terrain-redo-btn');
+                        if (terrainRedoBtn) {
+                            terrainRedoBtn.addEventListener('click', () => {
+                                if (terrainHistoryIndex < terrainHistory.length - 1) {
+                                    terrainHistoryIndex++;
+                                     if (terrainHistory[terrainHistoryIndex]?.data) {
+                                        const positions = terrain.geometry.attributes.position.array;
+                                        const savedPositions = terrainHistory[terrainHistoryIndex].data;
+                                        for (let i = 0; i < positions.length; i++) { positions[i] = savedPositions[i]; }
+                                        terrain.geometry.attributes.position.needsUpdate = true;
+                                        terrain.geometry.computeVertexNormals(); updateTerrainMaterial();
+                                    }
+                                }
+                            });
+                        }
+                        // --- 地形歷史記錄結束 ---
+
+                        // --- 地圖測量工具按鈕 (如果存在) ---
+                        const profileToggleBtn = document.getElementById('profile-toggle');
+                        if (profileToggleBtn) { profileToggleBtn.addEventListener('click', toggleProfileMode); }
+                        const profileCloseBtn = document.getElementById('profile-close');
+                        if (profileCloseBtn) {
+                            profileCloseBtn.addEventListener('click', () => {
+                                hideProfilePanel();
+                                if (isProfileMode) { toggleProfileMode(); }
+                            });
+                        }
+                        // --- 新增：垂直誇大率滑動桿事件 ---
+                        const exagSlider = document.getElementById('vertical-exaggeration-slider');
+                        const exagValueSpan = document.getElementById('exag-value');
+
+                        if (exagSlider && exagValueSpan) {
+                            // 初始設定值
+                            verticalExaggerationFactor = parseFloat(exagSlider.value);
+                            exagValueSpan.textContent = verticalExaggerationFactor.toFixed(1);
+
+                            exagSlider.addEventListener('input', (e) => {
+                                verticalExaggerationFactor = parseFloat(e.target.value);
+                                exagValueSpan.textContent = verticalExaggerationFactor.toFixed(1);
+                                // 如果縱剖面圖正在顯示，則重新繪製
+                                if (profilePanel.style.display === 'flex') {
+                                    createProfileChart();
+                                }
+                            });
+                        }
+                        // --- 地圖測量結束 ---
+
+                        // --- 鍵盤事件 ---
+                        window.addEventListener('keydown', (e) => {
+                                                    // 將按鍵轉換為小寫以確保兼容性
+                                                    const key = e.key.toLowerCase();
+                                                    // 如果按下的鍵在我們定義的 keys 對象中 (w, a, s, d, z, c)
+                                                    if (keys.hasOwnProperty(key)) {
+                                                        keys[key] = true;
+                                                    }
+                                                });
+                                                window.addEventListener('keyup', (e) => {
+                                                    const key = e.key.toLowerCase();
+                                                    if (keys.hasOwnProperty(key)) {
+                                                        keys[key] = false;
+                                                    }
+                                                });
+                        // --- 鍵盤結束 ---
+
+                        // --- 窗口大小調整 ---
+                        window.addEventListener('resize', () => {
+                            // 1. 處理 3D 渲染器和繪圖畫布的尺寸
+                            renderer.setSize(window.innerWidth, window.innerHeight);
+                            camera.aspect = window.innerWidth / window.innerHeight;
+                            camera.updateProjectionMatrix();
+
+                            if (drawingCanvas) {
+                                drawingCanvas.width = window.innerWidth;
+                                drawingCanvas.height = window.innerHeight;
+                                redrawCanvas();
+                            }
+
+                            // 2. 處理地圖畫布的尺寸（如果在地圖模式）
+                            if (isMapMode) {
+                                const mapContainer = document.getElementById('map-container');
+                                mapCanvas.width = mapContainer.offsetWidth;
+                                mapCanvas.height = mapContainer.offsetHeight;
+
+                                if (mapDrawingCanvas) {
+                                    mapDrawingCanvas.width = mapCanvas.width;
+                                    mapDrawingCanvas.height = mapCanvas.height;
+                                }
+                                if (highlightCanvas) {
+                                    highlightCanvas.width = mapCanvas.width;
+                                    highlightCanvas.height = mapCanvas.height;
+                                }
+                                if (polylineLayer) {
+                                    polylineLayer.width = mapCanvas.width;
+                                    polylineLayer.height = mapCanvas.height;
+                                }
+
+                                // 強制重繪地圖
+                                generate2DMap();
+                            }
+
+                            // 3. 【關鍵修復點】：處理縱剖面面板在視窗縮小後無法縮短的問題
+                            const profilePanel = document.getElementById('profile-panel');
+                            const minPanelHeight = 150; // 最小高度與 CSS 保持一致
+
+                            if (profilePanel && profilePanel.style.display === 'flex') {
+                                const rect = profilePanel.getBoundingClientRect();
+                                const newHeight = Math.min(rect.height, window.innerHeight - rect.top - 20); // 確保不超過視窗底部 20px 邊距
+
+                                if (newHeight < rect.height) {
+                                    // 只有在新高度小於當前高度時才進行調整
+                                    profilePanel.style.height = `${Math.max(minPanelHeight, newHeight)}px`;
+
+                                    // 重新計算寬度以避免超出右邊
+                                    const newWidth = Math.min(rect.width, window.innerWidth - rect.left - 20);
+                                    profilePanel.style.width = `${Math.max(300, newWidth)}px`;
+
+                                    // 強制重新計算畫布大小和重繪圖表
+                                    const profileContent = profilePanel.querySelector('.profile-content');
+                                    if (profileContent && profileCanvas) {
+                                        profileCanvas.width = profileContent.offsetWidth;
+                                        profileCanvas.height = profileContent.offsetHeight;
+                                        if (typeof createProfileChart === 'function') {
+                                            createProfileChart();
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        // --- 窗口大小調整結束 ---
+
+                        // === 新增：滑動桿同步 ===
+                        const toolStrengthSlider = document.getElementById('tool-strength');
+                        const toolRadiusSlider = document.getElementById('tool-radius');
+                        const toolbarToolStrengthSlider = document.getElementById('toolbar-tool-strength');
+                        const toolbarToolRadiusSlider = document.getElementById('toolbar-tool-radius');
+
+                        // 當工具欄強度滑桿變化時，更新設定面板的滑桿
+                        if (toolbarToolStrengthSlider && toolStrengthSlider) {
+                            toolbarToolStrengthSlider.addEventListener('input', (e) => {
+                                toolStrengthSlider.value = e.target.value;
+                                // 如果需要立即觸發設定面板滑桿的 input 事件（如果它有其他副作用），可以取消下面這行的註釋
+                                // toolStrengthSlider.dispatchEvent(new Event('input'));
+                            });
+                        }
+
+                        // 當工具欄範圍滑桿變化時，更新設定面板的滑桿
+                        if (toolbarToolRadiusSlider && toolRadiusSlider) {
+                            toolbarToolRadiusSlider.addEventListener('input', (e) => {
+                                toolRadiusSlider.value = e.target.value;
+                                // toolRadiusSlider.dispatchEvent(new Event('input'));
+                            });
+                        }
+
+                        // 當設定面板強度滑桿變化時，更新工具欄的滑桿
+                        if (toolStrengthSlider && toolbarToolStrengthSlider) {
+                            toolStrengthSlider.addEventListener('input', (e) => {
+                                toolbarToolStrengthSlider.value = e.target.value;
+                            });
+                        }
+
+                        // 當設定面板範圍滑桿變化時，更新工具欄的滑桿
+                        if (toolRadiusSlider && toolbarToolRadiusSlider) {
+                            toolRadiusSlider.addEventListener('input', (e) => {
+                                toolbarToolRadiusSlider.value = e.target.value;
+                            });
+                        }
+                        // === 同步結束 ===
+
+                    } catch (error) {
+                        console.error("初始化事件監聽器錯誤:", error);
+                    }
                 }
-                // --- 地形歷史記錄結束 ---
-
-                // --- 地圖測量工具按鈕 (如果存在) ---
-                const profileToggleBtn = document.getElementById('profile-toggle');
-                if (profileToggleBtn) { profileToggleBtn.addEventListener('click', toggleProfileMode); }
-                const profileCloseBtn = document.getElementById('profile-close');
-                if (profileCloseBtn) {
-                    profileCloseBtn.addEventListener('click', () => {
-                        hideProfilePanel();
-                        if (isProfileMode) { toggleProfileMode(); }
-                    });
-                }
-                // --- 地圖測量結束 ---
-
-                // --- 鍵盤事件 ---
-                window.addEventListener('keydown', (e) => { /* ... */ });
-                window.addEventListener('keyup', (e) => { /* ... */ });
-                // --- 鍵盤結束 ---
-
-                // --- 窗口大小調整 ---
-                window.addEventListener('resize', onWindowResize, false); // 修改這裡
-                // --- 窗口大小調整結束 ---
-
-                // === 新增：滑動桿同步 ===
-                const toolStrengthSlider = document.getElementById('tool-strength');
-                const toolRadiusSlider = document.getElementById('tool-radius');
-                const toolbarToolStrengthSlider = document.getElementById('toolbar-tool-strength');
-                const toolbarToolRadiusSlider = document.getElementById('toolbar-tool-radius');
-
-                // 當工具欄強度滑桿變化時，更新設定面板的滑桿
-                if (toolbarToolStrengthSlider && toolStrengthSlider) {
-                    toolbarToolStrengthSlider.addEventListener('input', (e) => {
-                        toolStrengthSlider.value = e.target.value;
-                        // 如果需要立即觸發設定面板滑桿的 input 事件（如果它有其他副作用），可以取消下面這行的註釋
-                        // toolStrengthSlider.dispatchEvent(new Event('input'));
-                    });
-                }
-
-                // 當工具欄範圍滑桿變化時，更新設定面板的滑桿
-                if (toolbarToolRadiusSlider && toolRadiusSlider) {
-                    toolbarToolRadiusSlider.addEventListener('input', (e) => {
-                        toolRadiusSlider.value = e.target.value;
-                        // toolRadiusSlider.dispatchEvent(new Event('input'));
-                    });
-                }
-
-                // 當設定面板強度滑桿變化時，更新工具欄的滑桿
-                if (toolStrengthSlider && toolbarToolStrengthSlider) {
-                    toolStrengthSlider.addEventListener('input', (e) => {
-                        toolbarToolStrengthSlider.value = e.target.value;
-                    });
-                }
-
-                // 當設定面板範圍滑桿變化時，更新工具欄的滑桿
-                if (toolRadiusSlider && toolbarToolRadiusSlider) {
-                    toolRadiusSlider.addEventListener('input', (e) => {
-                        toolbarToolRadiusSlider.value = e.target.value;
-                    });
-                }
-                // === 同步結束 ===
-
-            } catch (error) {
-                console.error("初始化事件監聽器錯誤:", error);
-            }
-        }
 
         // 在縱剖面畫布上添加滑鼠移動監聽
         // 1. 首先，修正addProfileHoverEffect函數的閉合問題
@@ -4534,40 +4686,31 @@
             try {
                 const positions = terrain.geometry.attributes.position.array;
 
-                // 序列化標註數據
-                const serializableMarkers = markers.map(marker => ({
-                    position: [marker.position.x, marker.position.y, marker.position.z],
-                    label: marker.label,
-                    icon: marker.icon,
-                    iconSrc: marker.iconSrc,
-                    color: marker.color
-                }));
-
-                // 序列化3D繪圖數據 (all3DDrawingsData 已經是可序列化的格式)
-                const serializable3DDrawings = JSON.parse(JSON.stringify(all3DDrawingsData));
-
-                const saveData = {
-                    version: '5.3.1', // 更新版本號以標識新的數據結構
+                const terrainData = {
+                    version: '1.0',
                     timestamp: new Date().toISOString(),
-                    terrain: {
-                        vertexCount: positions.length,
-                        positions: Array.from(positions),
-                        metadata: {
-                            gridSize: Math.sqrt(positions.length / 3),
-                            terrainWidth: 100,
-                            terrainHeight: 100
-                        }
-                    },
-                    markers: serializableMarkers,
-                    drawings3D: serializable3DDrawings
+                    vertexCount: positions.length,
+                    positions: Array.from(positions),
+                    metadata: {
+                        gridSize: Math.sqrt(positions.length / 3),
+                        terrainWidth: 100,
+                        terrainHeight: 100
+                    }
                 };
 
-                const defaultFileName = `terrain_sandbox_v5.3.1_${new Date().toISOString().slice(0,19).replace(/[:]/g, '-')}`;
+                // 產生預設檔名，但不直接使用
+                const defaultFileName = `terrain_${new Date().toISOString().slice(0,19).replace(/[:]/g, '-')}`;
+
+                // 彈出對話框讓使用者設定檔案名稱
                 const fileName = prompt('請輸入保存檔案名稱:', defaultFileName);
+
+                // 如果使用者取消，則不保存檔案
                 if (fileName === null) return;
+
+                // 確保檔案名稱以 .json 結尾
                 const finalFileName = fileName.endsWith('.json') ? fileName : `${fileName}.json`;
 
-                const jsonString = JSON.stringify(saveData);
+                const jsonString = JSON.stringify(terrainData);
                 const blob = new Blob([jsonString], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
@@ -4579,222 +4722,92 @@
                 document.body.removeChild(link);
                 URL.revokeObjectURL(url);
 
-                alert('地形、標註和3D繪圖儲存成功！');
+                alert('地形儲存成功！');
             } catch (error) {
-                console.error('儲存時發生錯誤:', error);
-                alert('儲存時發生錯誤！');
+                console.error('儲存地形時發生錯誤:', error);
+                alert('儲存地形時發生錯誤！');
             }
-        }
-
-        function createMarkerFromData(markerData) {
-            try {
-                const markerDiv = document.createElement('div');
-                markerDiv.classList.add('marker');
-                markerDiv.style.position = 'absolute';
-                document.getElementById('canvas-container').appendChild(markerDiv);
-
-                let markerIconElement;
-                if (markerData.iconSrc) {
-                    markerIconElement = document.createElement('img');
-                    markerIconElement.classList.add('marker-icon');
-                    markerIconElement.src = markerData.iconSrc;
-                    markerIconElement.alt = markerData.label;
-                    markerIconElement.style.display = 'block';
-                    markerIconElement.style.objectFit = 'contain';
-                } else {
-                    markerIconElement = document.createElement('div');
-                    markerIconElement.classList.add('marker-icon');
-                    markerIconElement.textContent = markerData.icon || "📍";
-                    markerIconElement.style.color = markerData.color || "red";
-                    markerIconElement.style.lineHeight = '1';
-                    markerIconElement.style.textAlign = 'center';
-                }
-                markerDiv.appendChild(markerIconElement);
-
-                const markerLabel = document.createElement('div');
-                markerLabel.classList.add('marker-label');
-                markerLabel.textContent = markerData.label;
-                const labelColor = markerData.color || "red";
-                markerLabel.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
-                markerLabel.style.color = labelColor;
-                markerLabel.style.border = `1px solid ${labelColor}`;
-                markerLabel.style.borderRadius = '3px';
-                markerLabel.style.padding = '2px 5px';
-                markerLabel.style.whiteSpace = 'nowrap';
-                markerLabel.style.marginTop = '2px';
-                markerDiv.appendChild(markerLabel);
-
-                setupMarkerEvents(markerDiv); // 確保為加載的標註也設置事件
-
-                const newMarker = {
-                    element: markerDiv,
-                    position: new THREE.Vector3(markerData.position[0], markerData.position[1], markerData.position[2]),
-                    label: markerData.label,
-                    icon: markerData.icon,
-                    iconSrc: markerData.iconSrc,
-                    color: labelColor
-                };
-                markers.push(newMarker);
-            } catch (error) {
-                console.error('從數據創建標註時出錯:', error, '數據:', markerData);
-            }
-        }
-
-        function recreate3DDrawing(drawingData) {
-            if (!drawingData || !drawingData.points || drawingData.points.length < 2) return;
-
-            const pointsVec3 = drawingData.points.map(p => new THREE.Vector3(p[0], p[1], p[2]));
-            const curve = new THREE.CatmullRomCurve3(pointsVec3);
-            const tubeGeometry = new THREE.TubeGeometry(
-                curve,
-                pointsVec3.length * 10,
-                drawingData.lineWidth || 0.3, // 使用保存的線寬或默認值
-                8,
-                false
-            );
-            const tubeMaterial = new THREE.MeshStandardMaterial({
-                color: new THREE.Color(drawingData.color || '#ff0000'), // 使用保存的顏色或默認值
-                metalness: 0.3,
-                roughness: 0.7,
-            });
-            const newTube = new THREE.Mesh(tubeGeometry, tubeMaterial);
-            scene.add(newTube);
-            tube3DMeshes.push(newTube); // 將重建的網格添加到場景網格數組
         }
 
         function loadTerrain(event) {
-            console.log("File input changed! loadTerrain function triggered.");
+            console.log("File input changed! loadTerrain function triggered."); // 確認函數被調用
             try {
                 const file = event.target.files[0];
                 if (!file) {
                     console.error("沒有選擇文件");
                     return;
                 }
-                console.log("開始讀取文件:", file.name, "大小:", file.size);
+
+                console.log("開始讀取文件:", file.name, "大小:", file.size); // 顯示文件信息
 
                 const reader = new FileReader();
                 reader.onload = function(e) {
                     try {
                         console.log("文件讀取完成，內容長度:", e.target.result.length);
                         console.log("開始解析JSON");
-                        let loadedData;
+                        let terrainData;
+
                         try {
-                            loadedData = JSON.parse(e.target.result);
-                            console.log("JSON 解析成功");
+                            terrainData = JSON.parse(e.target.result);
+                            console.log("JSON 解析成功:", terrainData); // 顯示解析後的數據結構
                         } catch (parseError) {
                             console.error("JSON解析錯誤:", parseError);
                             alert("無法解析地形文件，可能不是有效的JSON格式。錯誤信息: " + parseError.message);
                             return;
                         }
 
-                        // --- 加載地形數據 ---
-                        if (loadedData.terrain && loadedData.terrain.positions && loadedData.terrain.vertexCount) {
-                            console.log("開始加載地形數據");
-                            const positions = terrain.geometry.attributes.position.array;
-                            if (positions.length !== loadedData.terrain.positions.length) {
-                                console.error("地形數據大小不匹配");
-                                throw new Error(`地形數據大小不匹配: 文件(${loadedData.terrain.positions.length}) vs 當前(${positions.length})`);
-                            }
-                            for (let i = 0; i < positions.length; i++) {
-                                positions[i] = loadedData.terrain.positions[i];
-                            }
-                            terrain.geometry.attributes.position.needsUpdate = true;
-                            terrain.geometry.computeVertexNormals();
-                            updateTerrainMaterial();
-                            console.log("地形數據加載完成");
-
-                            // 清空地形歷史並保存新狀態
-                            terrainHistory = [];
-                            terrainHistoryIndex = -1;
-                            const newTerrainPositions = new Float32Array(terrain.geometry.attributes.position.array);
-                            terrainHistory.push({ type: 'terrain', data: newTerrainPositions, drawingIndex: -1 });
-                            terrainHistoryIndex++;
-
-                        } else if (loadedData.positions && loadedData.vertexCount) { // 兼容舊格式
-                            console.warn("正在加載舊版地形數據格式");
-                            const positions = terrain.geometry.attributes.position.array;
-                             if (positions.length !== loadedData.positions.length) {
-                                console.error("舊版地形數據大小不匹配");
-                                throw new Error(`舊版地形數據大小不匹配: 文件(${loadedData.positions.length}) vs 當前(${positions.length})`);
-                            }
-                            for (let i = 0; i < positions.length; i++) {
-                                positions[i] = loadedData.positions[i];
-                            }
-                            terrain.geometry.attributes.position.needsUpdate = true;
-                            terrain.geometry.computeVertexNormals();
-                            updateTerrainMaterial();
-                            console.log("舊版地形數據加載完成");
-                             // 清空地形歷史並保存新狀態
-                            terrainHistory = [];
-                            terrainHistoryIndex = -1;
-                            const newTerrainPositions = new Float32Array(terrain.geometry.attributes.position.array);
-                            terrainHistory.push({ type: 'terrain', data: newTerrainPositions, drawingIndex: -1 });
-                            terrainHistoryIndex++;
-                        } else {
-                            console.warn("文件中未找到有效的地形數據 (terrain.positions 或舊版 positions)");
+                        console.log("檢查數據格式");
+                        if (!terrainData.version || !terrainData.positions) {
+                            console.error("無效的地形數據格式，缺少 version 或 positions");
+                            throw new Error('無效的地形數據格式: 缺少必要的屬性');
                         }
 
+                        console.log("數據格式有效，版本:", terrainData.version);
+                        console.log("加載的 positions 長度:", terrainData.positions.length);
 
-                        // --- 清除現有的標註和3D繪圖 ---
-                        markers.forEach(marker => marker.element.remove());
-                        markers = [];
-                        tube3DMeshes.forEach(mesh => scene.remove(mesh));
-                        tube3DMeshes = [];
-                        all3DDrawingsData = [];
-                        if (tube3DMesh) { scene.remove(tube3DMesh); tube3DMesh = null; }
-                        drawingPoints = []; // 清空正在繪製的點
+                        const positions = terrain.geometry.attributes.position.array;
+                        console.log("當前地形 positions 長度:", positions.length);
 
-                        // --- 加載標註數據 ---
-                        if (loadedData.markers && Array.isArray(loadedData.markers)) {
-                            console.log(`開始加載 ${loadedData.markers.length} 個標註`);
-                            loadedData.markers.forEach(markerData => {
-                                createMarkerFromData(markerData);
-                            });
-                            updateMarkerPositions(); // 確保標註在正確位置顯示
-                            console.log("標註數據加載完成");
-                        } else {
-                            console.warn("文件中未找到標註數據 (markers)");
+                        if (positions.length !== terrainData.positions.length) {
+                            console.error("地形數據大小不匹配");
+                            throw new Error(`地形數據大小不匹配: 文件(${terrainData.positions.length}) vs 當前(${positions.length})`);
                         }
 
-                        // --- 加載3D繪圖數據 ---
-                        if (loadedData.drawings3D && Array.isArray(loadedData.drawings3D)) {
-                            console.log(`開始加載 ${loadedData.drawings3D.length} 個3D繪圖`);
-                            all3DDrawingsData = JSON.parse(JSON.stringify(loadedData.drawings3D)); // 深拷貝
-                            all3DDrawingsData.forEach(drawingData => {
-                                recreate3DDrawing(drawingData);
-                            });
-                            console.log("3D繪圖數據加載完成");
-                        } else {
-                            console.warn("文件中未找到3D繪圖數據 (drawings3D)");
+                        console.log("開始更新地形數據");
+                        // 復制地形數據
+                        for (let i = 0; i < positions.length; i++) {
+                            positions[i] = terrainData.positions[i];
                         }
 
-                        // 清空並重置2D繪圖歷史
-                        drawingContext.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
-                        drawingHistory = [];
-                        historyIndex = -1;
-                        saveToHistory(); // 保存初始空白繪圖狀態
+                        terrain.geometry.attributes.position.needsUpdate = true;
+                        console.log("position.needsUpdate 設置為 true");
+                        terrain.geometry.computeVertexNormals();
+                        console.log("已計算頂點法線");
+                        updateTerrainMaterial();
+                        console.log("已更新地形材質");
 
-                        // 清空並重置3D繪圖歷史
-                        tube3DMeshHistory = [JSON.parse(JSON.stringify(all3DDrawingsData))]; // 初始狀態為已加載的3D繪圖
-                        tube3DMeshHistoryIndex = 0;
+                        console.log("地形數據更新成功");
+                        alert('地形載入成功！');
 
-
-                        alert('數據載入成功！');
+                        // 只有在成功加載後才隱藏工具欄
                         if (typeof hideSystemToolbar === 'function') {
                              hideSystemToolbar();
                         }
 
                     } catch (error) {
-                        console.error('處理數據時發生錯誤:', error);
-                        alert('載入數據時發生錯誤: ' + error.message);
+                        console.error('處理地形數據時發生錯誤:', error);
+                        alert('載入地形數據時發生錯誤: ' + error.message);
                     }
                 };
+
                 reader.onerror = function() {
                     console.error("文件讀取錯誤:", reader.error);
                     alert("讀取文件時發生錯誤");
                 };
+
+                console.log("開始讀取文件內容 (readAsText)");
                 reader.readAsText(file);
-                event.target.value = '';
+                event.target.value = ''; // 清空選擇，以便可以再次選擇同一個文件
             } catch (error) {
                 console.error('loadTerrain 函數外部錯誤:', error);
                 alert('處理文件選擇時發生錯誤: ' + error.message);
@@ -4802,53 +4815,28 @@
         }
 
         function resetTerrain() {
-                   try {
-                       if (!confirm('確定要重設嗎？這將清除所有地形修改、標註和3D繪圖。')) return;
+           try {
+               if (!confirm('確定要重設地形嗎？這將清除所有修改。')) return;
 
-                       // 重設地形
-                       const positions = terrain.geometry.attributes.position.array;
-                       for (let i = 0; i < positions.length; i++) {
-                           positions[i] = initialTerrainPositions[i];
-                       }
-                       terrain.geometry.attributes.position.needsUpdate = true;
-                       terrain.geometry.computeVertexNormals();
-                       updateTerrainMaterial();
+               const positions = terrain.geometry.attributes.position.array;
+               for (let i = 0; i < positions.length; i++) {
+                   positions[i] = initialTerrainPositions[i];
+               }
 
-                       // 清除標註
-                       markers.forEach(marker => marker.element.remove());
-                       markers = [];
-                       updateMarkerPositions(); // 更新顯示
+               terrain.geometry.attributes.position.needsUpdate = true;
+               terrain.geometry.computeVertexNormals();
+               updateTerrainMaterial();
 
-                       // 清除3D繪圖
-                       tube3DMeshes.forEach(mesh => scene.remove(mesh));
-                       tube3DMeshes = [];
-                       if (tube3DMesh) {
-                           scene.remove(tube3DMesh);
-                           tube3DMesh = null;
-                       }
-                       all3DDrawingsData = [];
-                       drawingPoints = [];
+               terrainHistory = [];
+               terrainHistoryIndex = -1;
+               saveToHistory();
 
-                       // 重置歷史記錄
-                       terrainHistory = [];
-                       terrainHistoryIndex = -1;
-                       const newTerrainPositions = new Float32Array(terrain.geometry.attributes.position.array);
-                       terrainHistory.push({ type: 'terrain', data: newTerrainPositions, drawingIndex: -1 });
-                       terrainHistoryIndex++;
-
-                       drawingHistory = [];
-                       historyIndex = -1;
-                       saveToHistory(); // 保存空的2D繪圖歷史
-
-                       tube3DMeshHistory = [[]]; // 初始空的3D繪圖歷史
-                       tube3DMeshHistoryIndex = 0;
-
-                       alert('所有內容已重設！');
-                   } catch (error) {
-                       console.error('重設錯誤:', error);
-                       alert('重設時發生錯誤！');
-                   }
-                }
+               alert('地形已重設！');
+           } catch (error) {
+               console.error('重設地形錯誤:', error);
+               alert('重設地形時發生錯誤！');
+           }
+        }
 
         // 檢查瀏覽器是否支持全屏模式
         function getFullscreenElement() {
@@ -5067,26 +5055,11 @@
                 function stopDraw() {
                     if (isDrawing) {
                         isDrawing = false;
-                        if (is3DDrawingMode && !isErasing && drawingPoints.length >= 2 && tube3DMesh) { // Ensure tube3DMesh exists
-                            // 1. The tube3DMesh is already in the scene from the last update3DTube() call.
-                            //    Now, make it "permanent" by adding it to our main list of active meshes.
+                        if (is3DDrawingMode && tube3DMesh) {
                             tube3DMeshes.push(tube3DMesh);
-
-                            // 2. Store its data representation in all3DDrawingsData for saving/loading.
-                            all3DDrawingsData.push({
-                                points: drawingPoints.map(p => [p.x, p.y, p.z]),
-                                color: currentColor,
-                                lineWidth: currentLineWidth3D
-                            });
-
-                            // 3. Reset tube3DMesh for the next drawing operation (it no longer holds the "active" preview)
-                            tube3DMesh = null;
-                            drawingPoints = []; // Clear points for the next line
-
-                            // 4. Save the history (which snapshots all3DDrawingsData)
                             save3DHistory();
+                            tube3DMesh = null;
                         } else if (!is3DDrawingMode) {
-                            // Original 2D drawing history
                             saveToHistory();
                         }
                     }
@@ -5211,13 +5184,24 @@
                     undoBtn.addEventListener('click', () => {
                         if (is3DDrawingMode && tube3DMeshHistoryIndex > 0) {
                             tube3DMeshHistoryIndex--;
-                            // 清除當前場景中的3D線條
+
+                            // 清除當前場景中的所有 3D 線條
                             tube3DMeshes.forEach(mesh => scene.remove(mesh));
                             tube3DMeshes = [];
-                            // 從歷史記錄加載數據
-                            all3DDrawingsData = JSON.parse(JSON.stringify(tube3DMeshHistory[tube3DMeshHistoryIndex]));
-                            // 重新創建3D線條
-                            all3DDrawingsData.forEach(data => recreate3DDrawing(data)); // recreate3DDrawing 會將網格添加到 scene 和 tube3DMeshes
+
+                            // 恢復上一個狀態
+                            const previousState = tube3DMeshHistory[tube3DMeshHistoryIndex];
+                            previousState.forEach(meshData => {
+                                const mesh = new THREE.Mesh(
+                                    meshData.geometry,
+                                    meshData.material
+                                );
+                                mesh.position.copy(meshData.position);
+                                mesh.rotation.copy(meshData.rotation);
+                                mesh.scale.copy(meshData.scale);
+                                scene.add(mesh);
+                                tube3DMeshes.push(mesh);
+                            });
                         } else if (!is3DDrawingMode) {
                             // 原有的 2D 上一步邏輯
                             if (historyIndex > 0) {
@@ -5234,13 +5218,24 @@
                     redoBtn.addEventListener('click', () => {
                         if (is3DDrawingMode && tube3DMeshHistoryIndex < tube3DMeshHistory.length - 1) {
                             tube3DMeshHistoryIndex++;
-                            // 清除當前場景中的3D線條
+
+                            // 清除當前場景中的所有 3D 線條
                             tube3DMeshes.forEach(mesh => scene.remove(mesh));
                             tube3DMeshes = [];
-                            // 從歷史記錄加載數據
-                            all3DDrawingsData = JSON.parse(JSON.stringify(tube3DMeshHistory[tube3DMeshHistoryIndex]));
-                            // 重新創建3D線條
-                            all3DDrawingsData.forEach(data => recreate3DDrawing(data));
+
+                            // 恢復下一個狀態
+                            const nextState = tube3DMeshHistory[tube3DMeshHistoryIndex];
+                            nextState.forEach(meshData => {
+                                const mesh = new THREE.Mesh(
+                                    meshData.geometry,
+                                    meshData.material
+                                );
+                                mesh.position.copy(meshData.position);
+                                mesh.rotation.copy(meshData.rotation);
+                                mesh.scale.copy(meshData.scale);
+                                scene.add(mesh);
+                                tube3DMeshes.push(mesh);
+                            });
                         } else if (!is3DDrawingMode) {
                             // 原有的 2D 下一步邏輯
                             if (historyIndex < drawingHistory.length - 1) {
@@ -5260,19 +5255,19 @@
                                 // 清除所有 3D 線條
                                 tube3DMeshes.forEach(mesh => scene.remove(mesh));
                                 tube3DMeshes = [];
-                                if (tube3DMesh) { // 清除正在繪製的線
+                                if (tube3DMesh) {
                                     scene.remove(tube3DMesh);
                                     tube3DMesh = null;
                                 }
-                                all3DDrawingsData = []; // 清空數據
-                                drawingPoints = []; // 清空當前點
-                                save3DHistory(); // 保存空的歷史狀態
+
+                                // 更新歷史記錄
+                                save3DHistory();
                             } else {
                                 // 清除 2D 繪圖
                                 drawingContext.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
                                 drawingHistory = [];
                                 historyIndex = -1;
-                                saveToHistory(); // 保存空的歷史狀態
+                                saveToHistory();
                             }
                         }
                     });
@@ -5964,21 +5959,6 @@
 
                 const resetZoomBtn = document.getElementById('reset-zoom-btn');
 
-                // ---- 新增開始：禁用縮放按鈕 ----
-                if (zoomInBtn) {
-                    zoomInBtn.disabled = true;
-                    zoomInBtn.onclick = () => { console.log("放大按鈕已禁用。"); };
-                    // 或者您可以完全移除 click 事件監聽器，如果它是在這裡添加的
-                }
-                if (zoomOutBtn) {
-                    zoomOutBtn.disabled = true;
-                    zoomOutBtn.onclick = () => { console.log("縮小按鈕已禁用。"); };
-                }
-                // 注意：重設縮放按鈕 (resetZoomBtn) 仍然可以工作，因為它不改變縮放級別，只是重置。
-                // 如果也想禁用它，可以像上面那樣操作。
-                // ---- 新增結束 ----
-
-
                 // 改進放大和縮小按鈕功能
                 if (zoomInBtn) {
                   zoomInBtn.addEventListener('click', () => {
@@ -6054,12 +6034,7 @@
 
                 if (mapContainer) {
                   mapContainer.addEventListener('wheel', (e) => {
-
-                    // ---- 新增開始：禁用滾輪縮放 ----
-                                        console.log("地圖滾輪事件觸發，但縮放功能已禁用。");
-                                        e.preventDefault(); // 仍然阻止默認滾動行為
-                                        return; // 直接返回，不執行縮放邏輯
-                                        // ---- 新增結束 ----
+                      e.preventDefault();
 
                       // 確認是縮放操作而非普通滾動
                       const isZoomGesture = e.ctrlKey || Math.abs(e.deltaY) > Math.abs(e.deltaX) * 3;
@@ -7342,169 +7317,171 @@
             });
         }
 
-        function drawSmoothContours(context, positions, gridSize, minHeight, maxHeight, offsetX, offsetY, pixelSize) {
-            try {
-                // 設置固定的等高線間距為20米
-                const contourInterval = 20;  // 直接設為20米
 
-                // 設置等高線樣式
-                context.lineCap = 'round';
-                context.lineJoin = 'round';
+                function drawSmoothContours(context, positions, gridSize, minHeight, maxHeight, offsetX, offsetY, pixelSize) {
+                    try {
+                        // 設置固定的等高線間距為20米
+                        const contourInterval = 20;  // 直接設為20米
+                        const heightMultiplier = 10; // 定義高度倍數，修復未定義錯誤
 
-                // 創建一個用於存儲等高線點的數組
-                let contourPoints = new Map();
+                        // 設置等高線樣式
+                        context.lineCap = 'round';
+                        context.lineJoin = 'round';
 
-                // 遍歷每個網格單元
-                for (let y = 0; y < gridSize - 1; y++) {
-                    for (let x = 0; x < gridSize - 1; x++) {
-                        // 在drawSmoothContours函数中
-                        // 获取网格四个角的高度并乘以倍数因子
-                        const z1 = positions[(y * gridSize + x) * 3 + 2] * heightMultiplier;
-                        const z2 = positions[(y * gridSize + x + 1) * 3 + 2] * heightMultiplier;
-                        const z3 = positions[((y + 1) * gridSize + x) * 3 + 2] * heightMultiplier;
-                        const z4 = positions[((y + 1) * gridSize + x + 1) * 3 + 2] * heightMultiplier;
+                        // 創建一個用於存儲等高線點的數組
+                        let contourPoints = new Map();
 
-                        // 計算這個網格中應該經過的等高線
-                        const minZ = Math.min(z1, z2, z3, z4);
-                        const maxZ = Math.max(z1, z2, z3, z4);
+                        // 遍歷每個網格單元
+                        for (let y = 0; y < gridSize - 1; y++) {
+                            for (let x = 0; x < gridSize - 1; x++) {
+                                // 在drawSmoothContours函数中
+                                // 获取网格四个角的高度并乘以倍数因子
+                                const z1 = positions[(y * gridSize + x) * 3 + 2] * heightMultiplier;
+                                const z2 = positions[(y * gridSize + x + 1) * 3 + 2] * heightMultiplier;
+                                const z3 = positions[((y + 1) * gridSize + x) * 3 + 2] * heightMultiplier;
+                                const z4 = positions[((y + 1) * gridSize + x + 1) * 3 + 2] * heightMultiplier;
 
-                        // 對於每個可能的等高線高度
-                        for (let h = Math.floor(minZ / contourInterval) * contourInterval;
-                             h <= maxZ;
-                             h += contourInterval) {
+                                // 計算這個網格中應該經過的等高線
+                                const minZ = Math.min(z1, z2, z3, z4);
+                                const maxZ = Math.max(z1, z2, z3, z4);
 
-                            if (!contourPoints.has(h)) {
-                                contourPoints.set(h, []);
-                            }
+                                // 對於每個可能的等高線高度
+                                for (let h = Math.floor(minZ / contourInterval) * contourInterval;
+                                     h <= maxZ;
+                                     h += contourInterval) {
 
-                            // 在網格邊緣尋找等高線交點
-                            let points = [];
+                                    if (!contourPoints.has(h)) {
+                                        contourPoints.set(h, []);
+                                    }
 
-                            // 檢查四個邊
-                            // 左邊
-                            if ((z1 <= h && h <= z3) || (z3 <= h && h <= z1)) {
-                                const t = (h - z1) / (z3 - z1);
-                                points.push({
-                                    x: offsetX + x * pixelSize,
-                                    y: offsetY + (y + t) * pixelSize
-                                });
-                            }
-                            // 右邊
-                            if ((z2 <= h && h <= z4) || (z4 <= h && h <= z2)) {
-                                const t = (h - z2) / (z4 - z2);
-                                points.push({
-                                    x: offsetX + (x + 1) * pixelSize,
-                                    y: offsetY + (y + t) * pixelSize
-                                });
-                            }
-                            // 上邊
-                            if ((z1 <= h && h <= z2) || (z2 <= h && h <= z1)) {
-                                const t = (h - z1) / (z2 - z1);
-                                points.push({
-                                    x: offsetX + (x + t) * pixelSize,
-                                    y: offsetY + y * pixelSize
-                                });
-                            }
-                            // 下邊
-                            if ((z3 <= h && h <= z4) || (z4 <= h && h <= z3)) {
-                                const t = (h - z3) / (z4 - z3);
-                                points.push({
-                                    x: offsetX + (x + t) * pixelSize,
-                                    y: offsetY + (y + 1) * pixelSize
-                                });
-                            }
+                                    // 在網格邊緣尋找等高線交點
+                                    let points = [];
 
-                            if (points.length === 2) {
-                                contourPoints.get(h).push(points);
+                                    // 檢查四個邊
+                                    // 左邊
+                                    if ((z1 <= h && h <= z3) || (z3 <= h && h <= z1)) {
+                                        const t = (h - z1) / (z3 - z1);
+                                        points.push({
+                                            x: offsetX + x * pixelSize,
+                                            y: offsetY + (y + t) * pixelSize
+                                        });
+                                    }
+                                    // 右邊
+                                    if ((z2 <= h && h <= z4) || (z4 <= h && h <= z2)) {
+                                        const t = (h - z2) / (z4 - z2);
+                                        points.push({
+                                            x: offsetX + (x + 1) * pixelSize,
+                                            y: offsetY + (y + t) * pixelSize
+                                        });
+                                    }
+                                    // 上邊
+                                    if ((z1 <= h && h <= z2) || (z2 <= h && h <= z1)) {
+                                        const t = (h - z1) / (z2 - z1);
+                                        points.push({
+                                            x: offsetX + (x + t) * pixelSize,
+                                            y: offsetY + y * pixelSize
+                                        });
+                                    }
+                                    // 下邊
+                                    if ((z3 <= h && h <= z4) || (z4 <= h && h <= z3)) {
+                                        const t = (h - z3) / (z4 - z3);
+                                        points.push({
+                                            x: offsetX + (x + t) * pixelSize,
+                                            y: offsetY + (y + 1) * pixelSize
+                                        });
+                                    }
+
+                                    if (points.length === 2) {
+                                        contourPoints.get(h).push(points);
+                                    }
+                                }
                             }
                         }
-                    }
-                }
 
-                // 繪製所有等高線
-                contourPoints.forEach((pointSets, height) => {
-                    // 每100米（5個間隔）作為主等高線
-                    const isMajorContour = Math.round(height / 100) * 100 === height;
+                        // 繪製所有等高線
+                        contourPoints.forEach((pointSets, height) => {
+                            // 每100米（5個間隔）作為主等高線
+                            const isMajorContour = Math.round(height / 100) * 100 === height;
 
-                    context.beginPath();
-                    context.strokeStyle = 'black'; // 設定為黑色
-                    context.lineWidth = isMajorContour ? 2 : 1; // 主等高線 2px, 次等高線 1px
+                            context.beginPath();
+                            context.strokeStyle = 'black'; // 設定為黑色
+                            context.lineWidth = isMajorContour ? 2 : 1; // 主等高線 2px, 次等高線 1px
 
-                    pointSets.forEach(points => {
-                        context.moveTo(points[0].x, points[0].y);
-                        context.lineTo(points[1].x, points[1].y);
-                    });
+                            pointSets.forEach(points => {
+                                context.moveTo(points[0].x, points[0].y);
+                                context.lineTo(points[1].x, points[1].y);
+                            });
 
-                    context.stroke();
+                            context.stroke();
 
-                    // 為主等高線添加高度標籤（每條等高線只顯示一次）
-                    if (isMajorContour && pointSets.length > 0) {
-                        // 選擇最長的線段來放置標籤
-                        let longestSegment = pointSets[0];
-                        let maxLength = 0;
+                            // 為主等高線添加高度標籤（每條等高線只顯示一次）
+                            if (isMajorContour && pointSets.length > 0) {
+                                // 選擇最長的線段來放置標籤
+                                let longestSegment = pointSets[0];
+                                let maxLength = 0;
 
-                        pointSets.forEach(points => {
-                            const length = Math.hypot(
-                                points[1].x - points[0].x,
-                                points[1].y - points[0].y
-                            );
-                            if (length > maxLength) {
-                                maxLength = length;
-                                longestSegment = points;
+                                pointSets.forEach(points => {
+                                    const length = Math.hypot(
+                                        points[1].x - points[0].x,
+                                        points[1].y - points[0].y
+                                    );
+                                    if (length > maxLength) {
+                                        maxLength = length;
+                                        longestSegment = points;
+                                    }
+                                });
+
+                                // 在最長線段的中點放置標籤
+                                const midX = (longestSegment[0].x + longestSegment[1].x) / 2;
+                                const midY = (longestSegment[0].y + longestSegment[1].y) / 2;
+
+                                // 計算線段的角度
+                                const angle = Math.atan2(
+                                    longestSegment[1].y - longestSegment[0].y,
+                                    longestSegment[1].x - longestSegment[0].x
+                                );
+
+                                // 保存當前上下文狀態
+                                context.save();
+
+                                // 移動到標籤位置並旋轉
+                                context.translate(midX, midY);
+                                if (angle > Math.PI/2 || angle < -Math.PI/2) {
+                                    context.rotate(angle + Math.PI);
+                                } else {
+                                    context.rotate(angle);
+                                }
+
+                                // 設置標籤樣式
+                                context.font = 'bold 10px Arial';
+                                context.fillStyle = 'rgba(101, 67, 33, 0.9)';
+                                context.textAlign = 'center';
+                                context.textBaseline = 'middle';
+
+                                // 繪製白色背景
+                                const text = Math.round(height) + 'm';
+                                const metrics = context.measureText(text);
+                                context.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                                context.fillRect(
+                                    -metrics.width/2 - 2,
+                                    -6,
+                                    metrics.width + 4,
+                                    12
+                                );
+
+                                // 繪製文字
+                                context.fillStyle = 'rgba(101, 67, 33, 0.9)';
+                                context.fillText(text, 0, 0);
+
+                                // 恢復上下文狀態
+                                context.restore();
                             }
                         });
 
-                        // 在最長線段的中點放置標籤
-                        const midX = (longestSegment[0].x + longestSegment[1].x) / 2;
-                        const midY = (longestSegment[0].y + longestSegment[1].y) / 2;
-
-                        // 計算線段的角度
-                        const angle = Math.atan2(
-                            longestSegment[1].y - longestSegment[0].y,
-                            longestSegment[1].x - longestSegment[0].x
-                        );
-
-                        // 保存當前上下文狀態
-                        context.save();
-
-                        // 移動到標籤位置並旋轉
-                        context.translate(midX, midY);
-                        if (angle > Math.PI/2 || angle < -Math.PI/2) {
-                            context.rotate(angle + Math.PI);
-                        } else {
-                            context.rotate(angle);
-                        }
-
-                        // 設置標籤樣式
-                        context.font = 'bold 10px Arial';
-                        context.fillStyle = 'rgba(101, 67, 33, 0.9)';
-                        context.textAlign = 'center';
-                        context.textBaseline = 'middle';
-
-                        // 繪製白色背景
-                        const text = Math.round(height) + 'm';
-                        const metrics = context.measureText(text);
-                        context.fillStyle = 'rgba(255, 255, 255, 0.8)';
-                        context.fillRect(
-                            -metrics.width/2 - 2,
-                            -6,
-                            metrics.width + 4,
-                            12
-                        );
-
-                        // 繪製文字
-                        context.fillStyle = 'rgba(101, 67, 33, 0.9)';
-                        context.fillText(text, 0, 0);
-
-                        // 恢復上下文狀態
-                        context.restore();
+                    } catch (error) {
+                        console.error('繪製等高線時發生錯誤:', error);
                     }
-                });
-
-            } catch (error) {
-                console.error('繪製等高線時發生錯誤:', error);
-            }
-        }
+                }
 
         // 雙線性插值函數
         // 改進雙線性插值函數（增加快取）
@@ -7708,61 +7685,6 @@
         // 在generate2DMap函數結尾處調用
         drawDebugInfo(mapContext);
 
-        function onWindowResize() {
-            if (camera && renderer) { // 確保 camera 和 renderer 已初始化
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(window.innerWidth, window.innerHeight);
-
-                // 更新 2D 繪圖畫布的大小
-                if (drawingCanvas) {
-                    drawingCanvas.width = window.innerWidth;
-                    drawingCanvas.height = window.innerHeight;
-                    // 如果 2D 繪圖內容在調整大小後需要重繪，請在這裡調用 redrawCanvas()
-                    // 但如果你的 animate 循環會持續重繪，則可能不需要
-                    if (typeof redrawCanvas === 'function' && !is3DDrawingMode) { // 只在2D模式下重繪2D畫布
-                        redrawCanvas();
-                    }
-                }
-
-                // 如果處於地圖模式，也需要更新地圖相關畫布並重新生成地圖
-                if (isMapMode && mapCanvas) {
-                    const mapContainer = document.getElementById('map-container');
-                    if (mapContainer) {
-                        mapCanvas.width = mapContainer.offsetWidth;
-                        mapCanvas.height = mapContainer.offsetHeight;
-                        if (mapDrawingCanvas) {
-                            mapDrawingCanvas.width = mapCanvas.width;
-                            mapDrawingCanvas.height = mapCanvas.height;
-                        }
-                        if (highlightCanvas) {
-                            highlightCanvas.width = mapCanvas.width;
-                            highlightCanvas.height = mapCanvas.height;
-                        }
-                        if (polylineLayer) { // 確保 polylineLayer 也被調整
-                            polylineLayer.width = mapCanvas.width;
-                            polylineLayer.height = mapCanvas.height;
-                        }
-                        if (typeof generate2DMap === 'function') {
-                            generate2DMap(); // 重新生成2D地圖
-                        }
-                    }
-                }
-
-                // 更新縱剖面圖的畫布大小 (如果面板可見且其大小受視窗影響)
-                if (profilePanel && profilePanel.style.display !== 'none' && profileCanvas) {
-                    const profileContent = profilePanel.querySelector('.profile-content');
-                    if (profileContent) {
-                        profileCanvas.width = profileContent.offsetWidth;
-                        profileCanvas.height = profileContent.offsetHeight;
-                        if (typeof createProfileChart === 'function') {
-                            createProfileChart(); // 重新繪製縱剖面圖
-                        }
-                    }
-                }
-            }
-        }
-
         function animate() {
             requestAnimationFrame(animate);
             if (isMouseDown && currentTool) {
@@ -7928,10 +7850,18 @@
 
         // 修改 3D 線條的歷史記錄管理
         function save3DHistory() {
-            // 清除當前索引之後的歷史記錄
+            // 創建當前場景中所有 3D 線條的深度拷貝
+            const currentState = tube3DMeshes.map(mesh => ({
+                geometry: mesh.geometry.clone(),
+                material: mesh.material.clone(),
+                position: mesh.position.clone(),
+                rotation: mesh.rotation.clone(),
+                scale: mesh.scale.clone()
+            }));
+
+            // 清除後面的歷史記錄
             tube3DMeshHistory = tube3DMeshHistory.slice(0, tube3DMeshHistoryIndex + 1);
-            // 保存 all3DDrawingsData 的深拷貝
-            tube3DMeshHistory.push(JSON.parse(JSON.stringify(all3DDrawingsData)));
+            tube3DMeshHistory.push(currentState);
             tube3DMeshHistoryIndex++;
         }
     </script>
