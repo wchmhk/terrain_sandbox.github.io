@@ -815,6 +815,28 @@
         🔲
         <span class="tool-tooltip">全屏模式</span>
     </button>
+    <button class="tool-button" id="preset-menu-btn">
+        📚
+        <span class="tool-tooltip">預設地形庫</span>
+    </button>
+</div>
+
+<!-- 在 </body> 標籤前加入這個選單視窗 -->
+<div id="preset-terrain-modal" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(255, 255, 255, 0.95); padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.25); z-index: 2000; width: 280px; text-align: center;">
+    <h3 style="margin-top: 0; color: #333; margin-bottom: 15px;">選擇地形範例</h3>
+    <div style="display: flex; flex-direction: column; gap: 10px;">
+        <button class="preset-option-btn" data-file="地形_凹坡.json" style="padding: 10px; border: 1px solid #ddd; border-radius: 6px; background: white; cursor: pointer; font-size: 16px;">
+            📉 凹坡 (Concave Slope)
+        </button>
+        <button class="preset-option-btn" data-file="地形_山咀山谷.json" style="padding: 10px; border: 1px solid #ddd; border-radius: 6px; background: white; cursor: pointer; font-size: 16px;">
+            🏔️ 山咀與山谷 (Spur & Valley)
+        </button>
+        <button class="preset-option-btn" data-file="地形_陡坡緩坡.json" style="padding: 10px; border: 1px solid #ddd; border-radius: 6px; background: white; cursor: pointer; font-size: 16px;">
+            ⛰️ 陡坡與緩坡 (Steep & Gentle)
+        </button>
+    </div>
+    <button id="close-preset-modal" style="margin-top: 15px; padding: 8px 20px; background: #666; color: white; border: none; border-radius: 20px; cursor: pointer;">關閉</button>
+</div>
 </div>
 
 <div class="terrain-toolbar">
@@ -1220,56 +1242,60 @@
         window.addEventListener('load', init);
 
         function init() {
-            try {
-                // 初始化3D場景
-                initScene();
+                    try {
+                        // 初始化3D場景
+                        initScene();
 
-                // 初始化事件監聽器
-                initEventListeners();
+                        // 初始化事件監聽器
+                        initEventListeners();
 
-                // 創建半徑指示器
-                createRadiusIndicator();
+                        // 創建半徑指示器
+                        createRadiusIndicator();
 
-                // 初始化繪圖工具
-                initDrawingTools();
+                        // 初始化繪圖工具
+                        initDrawingTools();
 
-                // 初始化地圖模式
-                initMapMode();
+                        // 初始化地圖模式
+                        initMapMode();
 
-                // 初始化量角器
-                initProtractor();
+                        // 初始化量角器
+                        initProtractor();
 
-                // 初始化2D地圖繪圖功能
-                initMapDrawingTools();
+                        // 初始化2D地圖繪圖功能
+                        initMapDrawingTools();
 
-                // 保存初始地形狀態
-                const terrainPositions = terrain.geometry.attributes.position.array;
-                const newTerrainPositions = new Float32Array(terrainPositions);
-                terrainHistory.push({
-                    type: 'terrain',
-                    data: newTerrainPositions,
-                    drawingIndex: -1,
-                });
-                terrainHistoryIndex++;
+                        // --- 修正：確保預設地形選單在此時初始化 ---
+                        initPresetMenu();
+                        // -------------------------------------
 
-                // 保存初始狀態到歷史記錄
-                saveToHistory();
+                        // 保存初始地形狀態
+                        const terrainPositions = terrain.geometry.attributes.position.array;
+                        const newTerrainPositions = new Float32Array(terrainPositions);
+                        terrainHistory.push({
+                            type: 'terrain',
+                            data: newTerrainPositions,
+                            drawingIndex: -1,
+                        });
+                        terrainHistoryIndex++;
 
-                // 開始動畫循環
-                animate();
+                        // 保存初始狀態到歷史記錄
+                        saveToHistory();
 
-                // 隱藏加載屏
-                document.getElementById('loading-screen').style.display = 'none';
-            } catch (error) {
-                console.error('初始化錯誤:', error);
-                document.getElementById('loading-screen').textContent = '載入失敗: ' + error.message;
-            }
+                        // 開始動畫循環
+                        animate();
 
-            // 移動設備初始化
-            if (isMobile) {
-                initMobileControls();
-            }
-        }
+                        // 隱藏加載屏
+                        document.getElementById('loading-screen').style.display = 'none';
+                    } catch (error) {
+                        console.error('初始化錯誤:', error);
+                        document.getElementById('loading-screen').textContent = '載入失敗: ' + error.message;
+                    }
+
+                    // 移動設備初始化
+                    if (isMobile) {
+                        initMobileControls();
+                    }
+                }
 
         const mapCanvas = document.getElementById('map-canvas');
 
@@ -8124,6 +8150,296 @@
             tube3DMeshHistory.push(currentState);
             tube3DMeshHistoryIndex++;
         }
+
+        // --- 預設地形庫功能 (完整版) ---
+
+        // 等待頁面載入完成後執行
+        document.addEventListener('DOMContentLoaded', () => {
+            initPresetMenu();
+        });
+
+        // 如果腳本是 type="module"，DOMContentLoaded 可能已經觸發過
+        // 所以我們也直接嘗試初始化一次
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            setTimeout(initPresetMenu, 100);
+        }
+
+        // --- 預設地形庫功能 (修正版) ---
+
+                function initPresetMenu() {
+                    const presetMenuBtn = document.getElementById('preset-menu-btn');
+                    const presetModal = document.getElementById('preset-terrain-modal');
+                    const closePresetBtn = document.getElementById('close-preset-modal');
+                    const optionBtns = document.querySelectorAll('.preset-option-btn');
+
+                    // 檢查元素是否存在
+                    if (!presetMenuBtn || !presetModal) {
+                        console.warn("找不到預設地形選單的按鈕或視窗元素，請檢查 HTML ID。");
+                        return;
+                    }
+
+                    console.log("預設地形選單初始化...");
+
+                    // 1. 綁定主按鈕點擊 (使用 onclick 覆蓋舊事件，避免重複綁定問題)
+                    presetMenuBtn.onclick = function(e) {
+                        e.preventDefault();
+                        e.stopPropagation(); // 關鍵：阻止冒泡，避免觸發全域點擊關閉事件
+
+                        console.log("預設地形庫按鈕被點擊");
+                        presetModal.style.display = 'block';
+
+                        // 隱藏系統工具列 (如果已打開)
+                        const sysToolbar = document.querySelector('.system-toolbar');
+                        if (sysToolbar) sysToolbar.style.display = 'none';
+
+                        const sysBtn = document.getElementById('system-btn');
+                        if (sysBtn) sysBtn.classList.remove('active');
+                    };
+
+                    // 2. 綁定關閉按鈕
+                    if (closePresetBtn) {
+                        closePresetBtn.onclick = function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            presetModal.style.display = 'none';
+                        };
+                    }
+
+                    // 3. 綁定選項按鈕
+                    optionBtns.forEach(btn => {
+                        btn.onclick = function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+
+                            const fileName = this.getAttribute('data-file');
+                            if (fileName) {
+                                // 對中文檔名進行編碼
+                                const fileUrl = encodeURIComponent(fileName);
+                                console.log("嘗試載入:", fileUrl);
+                                loadJsonFromUrl(fileUrl);
+                                presetModal.style.display = 'none';
+                            } else {
+                                alert("錯誤：按鈕缺少 data-file 屬性");
+                            }
+                        };
+                    });
+
+                    // 4. 點擊背景關閉
+                    presetModal.onclick = function(e) {
+                        // 只有點擊遮罩層本身才關閉
+                        if (e.target === presetModal) {
+                            e.stopPropagation();
+                            presetModal.style.display = 'none';
+                        }
+                    };
+                }
+
+        // --- 核心載入與應用邏輯 ---
+
+        function loadJsonFromUrl(url) {
+            if (!confirm('載入新地形將覆蓋當前進度，確定嗎？')) return;
+
+            // 顯示載入提示
+            const loadingDiv = document.createElement('div');
+            loadingDiv.id = 'temp-loading';
+            loadingDiv.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.8);color:white;padding:20px;border-radius:8px;z-index:9999;font-size:16px;';
+            loadingDiv.textContent = '正在下載地形數據...';
+            document.body.appendChild(loadingDiv);
+
+            console.log(`正在讀取 URL: ${url}`);
+
+            // 加入時間戳防止快取
+            const timestamp = new Date().getTime();
+            const fetchUrl = `${url}?t=${timestamp}`;
+
+            fetch(fetchUrl)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP 錯誤! 狀態碼: ${response.status} (請確認檔案是否存在於 GitHub)`);
+                    }
+                    return response.json();
+                })
+                .then(terrainData => {
+                    applyTerrainData(terrainData);
+
+                    if(document.getElementById('temp-loading'))
+                        document.body.removeChild(document.getElementById('temp-loading'));
+
+                    alert('地形載入成功！');
+                })
+                .catch(error => {
+                    if(document.getElementById('temp-loading'))
+                        document.body.removeChild(document.getElementById('temp-loading'));
+
+                    console.error('載入失敗:', error);
+                    alert(`載入失敗：${error.message}\n\n請確認 JSON 檔案是否已上傳到與 index.html 同一層目錄。`);
+                });
+        }
+
+        // 完整的數據應用函數 (包含地形、標註、線條)
+        function applyTerrainData(terrainData) {
+            try {
+                console.log("開始應用地形數據...");
+
+                // A. 恢復地形高度
+                if (terrainData.positions) {
+                    // 確保 terrain 對象存在
+                    if (!terrain || !terrain.geometry) {
+                        throw new Error("3D 地形尚未初始化");
+                    }
+
+                    const positions = terrain.geometry.attributes.position.array;
+
+                    // 填入高度數據
+                    // 使用 Math.min 避免陣列長度不一致導致的錯誤
+                    const len = Math.min(positions.length, terrainData.positions.length);
+                    for (let i = 0; i < len; i++) {
+                        positions[i] = terrainData.positions[i];
+                    }
+
+                    terrain.geometry.attributes.position.needsUpdate = true;
+                    terrain.geometry.computeVertexNormals();
+
+                    // 嘗試更新材質 (如果有這個函數)
+                    if (typeof updateTerrainMaterial === 'function') {
+                        updateTerrainMaterial();
+                    }
+
+                    // 重置歷史記錄 (如果有定義)
+                    if (typeof terrainHistory !== 'undefined') {
+                        terrainHistory = [{
+                            type: 'terrain',
+                            data: new Float32Array(positions),
+                            drawingIndex: -1,
+                        }];
+                        if (typeof terrainHistoryIndex !== 'undefined') terrainHistoryIndex = 0;
+                    }
+                }
+
+                // B. 恢復標註 (Markers)
+                if (typeof markers !== 'undefined') {
+                    // 1. 清除舊標註 DOM
+                    markers.forEach(m => {
+                        if (m.element && m.element.parentNode) {
+                            m.element.parentNode.removeChild(m.element);
+                        }
+                    });
+                    // 2. 清空陣列
+                    markers.length = 0;
+
+                    // 3. 加入新標註
+                    if (terrainData.markers && Array.isArray(terrainData.markers)) {
+                        terrainData.markers.forEach(mData => {
+                            try {
+                                const markerDiv = document.createElement('div');
+                                markerDiv.classList.add('marker');
+                                markerDiv.style.position = 'absolute';
+                                document.getElementById('canvas-container').appendChild(markerDiv);
+
+                                let markerIconElement;
+                                // 處理圖片或 Emoji
+                                if (mData.iconSrc) {
+                                    markerIconElement = document.createElement('img');
+                                    markerIconElement.classList.add('marker-icon');
+                                    markerIconElement.src = mData.iconSrc;
+                                } else {
+                                    markerIconElement = document.createElement('div');
+                                    markerIconElement.classList.add('marker-icon');
+                                    markerIconElement.textContent = mData.icon || "📍";
+                                    markerIconElement.style.color = mData.color || "red";
+                                    markerIconElement.style.lineHeight = '1';
+                                    markerIconElement.style.textAlign = 'center';
+                                    markerIconElement.style.fontSize = '24px';
+                                }
+                                markerDiv.appendChild(markerIconElement);
+
+                                const markerLabel = document.createElement('div');
+                                markerLabel.classList.add('marker-label');
+                                markerLabel.textContent = mData.label;
+                                const labelColor = mData.color || "red";
+                                markerLabel.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
+                                markerLabel.style.color = labelColor;
+                                markerLabel.style.border = `1px solid ${labelColor}`;
+                                markerLabel.style.borderRadius = '3px';
+                                markerLabel.style.padding = '2px 5px';
+                                markerLabel.style.whiteSpace = 'nowrap';
+                                markerLabel.style.marginTop = '2px';
+                                markerDiv.appendChild(markerLabel);
+
+                                // 重新綁定事件 (嘗試查找全局函數)
+                                if (typeof setupMarkerEvents === 'function') setupMarkerEvents(markerDiv);
+
+                                // 直接綁定基本交互，以防 setupMarkerEvents 不存在
+                                markerDiv.addEventListener('contextmenu', (e) => {
+                                    if(typeof handleMarkerContextMenu === 'function') handleMarkerContextMenu(e);
+                                });
+
+                                // 存入陣列
+                                markers.push({
+                                    element: markerDiv,
+                                    // 確保轉換為 THREE.Vector3
+                                    position: new THREE.Vector3(mData.position.x, mData.position.y, mData.position.z),
+                                    label: mData.label,
+                                    icon: mData.icon,
+                                    iconSrc: mData.iconSrc,
+                                    color: labelColor
+                                });
+                            } catch (e) {
+                                console.error("建立單個標註失敗", e);
+                            }
+                        });
+
+                        // 更新標註位置
+                        if (typeof updateMarkerPositions === 'function') updateMarkerPositions();
+                    }
+                }
+
+                // C. 恢復 3D 線條 (Drawings3D)
+                if (typeof tube3DMeshes !== 'undefined') {
+                    // 清除舊線條
+                    tube3DMeshes.forEach(mesh => {
+                        if(scene) scene.remove(mesh);
+                    });
+                    tube3DMeshes.length = 0;
+
+                    // 建立新線條
+                    if (terrainData.drawings3D && Array.isArray(terrainData.drawings3D)) {
+                        terrainData.drawings3D.forEach(lineData => {
+                            try {
+                                const points = lineData.points.map(p => new THREE.Vector3(p.x, p.y, p.z));
+                                if (points.length < 2) return;
+
+                                const curve = new THREE.CatmullRomCurve3(points);
+                                const tubeGeometry = new THREE.TubeGeometry(curve, points.length * 10, 0.3, 8, false);
+                                const tubeMaterial = new THREE.MeshStandardMaterial({
+                                    color: new THREE.Color(lineData.color),
+                                    metalness: 0.3,
+                                    roughness: 0.7,
+                                });
+                                const newTube = new THREE.Mesh(tubeGeometry, tubeMaterial);
+
+                                newTube.geometry.parameters = { path: curve };
+
+                                if(scene) scene.add(newTube);
+                                tube3DMeshes.push(newTube);
+                            } catch (e) {
+                                console.error("建立 3D 線條失敗", e);
+                            }
+                        });
+                    }
+                }
+
+                // D. 刷新 2D 地圖 (如果在該模式下)
+                if (isMapMode && typeof generate2DMap === 'function') {
+                    generate2DMap();
+                }
+
+            } catch (error) {
+                console.error("應用數據時發生嚴重錯誤:", error);
+                alert("數據應用失敗: " + error.message);
+            }
+        }
+
     </script>
 </body>
 </html>
