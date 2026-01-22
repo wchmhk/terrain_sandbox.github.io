@@ -4683,136 +4683,262 @@
         }
 
         function saveTerrain() {
-            try {
-                const positions = terrain.geometry.attributes.position.array;
+                    try {
+                        const positions = terrain.geometry.attributes.position.array;
 
-                const terrainData = {
-                    version: '1.0',
-                    timestamp: new Date().toISOString(),
-                    vertexCount: positions.length,
-                    positions: Array.from(positions),
-                    metadata: {
-                        gridSize: Math.sqrt(positions.length / 3),
-                        terrainWidth: 100,
-                        terrainHeight: 100
+                        // 1. 序列化標註數據
+                        const markersData = markers.map(m => ({
+                            position: { x: m.position.x, y: m.position.y, z: m.position.z },
+                            label: m.label,
+                            icon: m.icon,
+                            iconSrc: m.iconSrc,
+                            color: m.color
+                        }));
+
+                        // 2. 序列化 3D 線條數據
+                        // 我們需要保存路徑點和顏色，因為 Mesh 本身不能直接 JSON 化
+                        const drawings3DData = tube3DMeshes.map(mesh => {
+                            // TubeGeometry 的路徑點儲存在 geometry.parameters.path.points 中
+                            const pathPoints = mesh.geometry.parameters.path.points;
+                            return {
+                                points: pathPoints.map(p => ({ x: p.x, y: p.y, z: p.z })),
+                                color: mesh.material.color.getHex() // 保存顏色為十六進制
+                            };
+                        });
+
+                        const terrainData = {
+                            version: '1.1', // 版本號升級
+                            timestamp: new Date().toISOString(),
+                            vertexCount: positions.length,
+                            positions: Array.from(positions),
+                            metadata: {
+                                gridSize: Math.sqrt(positions.length / 3),
+                                terrainWidth: 100,
+                                terrainHeight: 100
+                            },
+                            // 新增的數據
+                            markers: markersData,
+                            drawings3D: drawings3DData
+                        };
+
+                        // 產生預設檔名
+                        const defaultFileName = `terrain_project_${new Date().toISOString().slice(0,19).replace(/[:]/g, '-')}`;
+
+                        // 彈出對話框讓使用者設定檔案名稱
+                        const fileName = prompt('請輸入保存檔案名稱:', defaultFileName);
+
+                        // 如果使用者取消，則不保存檔案
+                        if (fileName === null) return;
+
+                        // 確保檔案名稱以 .json 結尾
+                        const finalFileName = fileName.endsWith('.json') ? fileName : `${fileName}.json`;
+
+                        const jsonString = JSON.stringify(terrainData);
+                        const blob = new Blob([jsonString], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = finalFileName;
+
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(url);
+
+                        alert('專案儲存成功（包含地形、標註與繪圖）！');
+                    } catch (error) {
+                        console.error('儲存地形時發生錯誤:', error);
+                        alert('儲存地形時發生錯誤！');
                     }
-                };
-
-                // 產生預設檔名，但不直接使用
-                const defaultFileName = `terrain_${new Date().toISOString().slice(0,19).replace(/[:]/g, '-')}`;
-
-                // 彈出對話框讓使用者設定檔案名稱
-                const fileName = prompt('請輸入保存檔案名稱:', defaultFileName);
-
-                // 如果使用者取消，則不保存檔案
-                if (fileName === null) return;
-
-                // 確保檔案名稱以 .json 結尾
-                const finalFileName = fileName.endsWith('.json') ? fileName : `${fileName}.json`;
-
-                const jsonString = JSON.stringify(terrainData);
-                const blob = new Blob([jsonString], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = finalFileName;
-
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                URL.revokeObjectURL(url);
-
-                alert('地形儲存成功！');
-            } catch (error) {
-                console.error('儲存地形時發生錯誤:', error);
-                alert('儲存地形時發生錯誤！');
-            }
-        }
-
-        function loadTerrain(event) {
-            console.log("File input changed! loadTerrain function triggered."); // 確認函數被調用
-            try {
-                const file = event.target.files[0];
-                if (!file) {
-                    console.error("沒有選擇文件");
-                    return;
                 }
 
-                console.log("開始讀取文件:", file.name, "大小:", file.size); // 顯示文件信息
-
-                const reader = new FileReader();
-                reader.onload = function(e) {
+                function loadTerrain(event) {
+                    console.log("File input changed! loadTerrain function triggered.");
                     try {
-                        console.log("文件讀取完成，內容長度:", e.target.result.length);
-                        console.log("開始解析JSON");
-                        let terrainData;
-
-                        try {
-                            terrainData = JSON.parse(e.target.result);
-                            console.log("JSON 解析成功:", terrainData); // 顯示解析後的數據結構
-                        } catch (parseError) {
-                            console.error("JSON解析錯誤:", parseError);
-                            alert("無法解析地形文件，可能不是有效的JSON格式。錯誤信息: " + parseError.message);
+                        const file = event.target.files[0];
+                        if (!file) {
+                            console.error("沒有選擇文件");
                             return;
                         }
 
-                        console.log("檢查數據格式");
-                        if (!terrainData.version || !terrainData.positions) {
-                            console.error("無效的地形數據格式，缺少 version 或 positions");
-                            throw new Error('無效的地形數據格式: 缺少必要的屬性');
-                        }
+                        console.log("開始讀取文件:", file.name);
 
-                        console.log("數據格式有效，版本:", terrainData.version);
-                        console.log("加載的 positions 長度:", terrainData.positions.length);
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            try {
+                                console.log("開始解析JSON");
+                                let terrainData;
 
-                        const positions = terrain.geometry.attributes.position.array;
-                        console.log("當前地形 positions 長度:", positions.length);
+                                try {
+                                    terrainData = JSON.parse(e.target.result);
+                                } catch (parseError) {
+                                    console.error("JSON解析錯誤:", parseError);
+                                    alert("無法解析文件。");
+                                    return;
+                                }
 
-                        if (positions.length !== terrainData.positions.length) {
-                            console.error("地形數據大小不匹配");
-                            throw new Error(`地形數據大小不匹配: 文件(${terrainData.positions.length}) vs 當前(${positions.length})`);
-                        }
+                                // --- 1. 恢復地形 ---
+                                if (terrainData.positions) {
+                                    const positions = terrain.geometry.attributes.position.array;
+                                    if (positions.length !== terrainData.positions.length) {
+                                        throw new Error(`地形數據大小不匹配`);
+                                    }
+                                    for (let i = 0; i < positions.length; i++) {
+                                        positions[i] = terrainData.positions[i];
+                                    }
+                                    terrain.geometry.attributes.position.needsUpdate = true;
+                                    terrain.geometry.computeVertexNormals();
+                                    updateTerrainMaterial();
 
-                        console.log("開始更新地形數據");
-                        // 復制地形數據
-                        for (let i = 0; i < positions.length; i++) {
-                            positions[i] = terrainData.positions[i];
-                        }
+                                    // 更新地形歷史
+                                    const newTerrainPositions = new Float32Array(positions);
+                                    terrainHistory = [{
+                                        type: 'terrain',
+                                        data: newTerrainPositions,
+                                        drawingIndex: -1,
+                                    }];
+                                    terrainHistoryIndex = 0;
+                                }
 
-                        terrain.geometry.attributes.position.needsUpdate = true;
-                        console.log("position.needsUpdate 設置為 true");
-                        terrain.geometry.computeVertexNormals();
-                        console.log("已計算頂點法線");
-                        updateTerrainMaterial();
-                        console.log("已更新地形材質");
+                                // --- 2. 清除並恢復標註 ---
+                                // 清除現有標註
+                                markers.forEach(m => {
+                                    if (m.element && m.element.parentNode) {
+                                        m.element.parentNode.removeChild(m.element);
+                                    }
+                                });
+                                markers = [];
 
-                        console.log("地形數據更新成功");
-                        alert('地形載入成功！');
+                                // 恢復保存的標註
+                                if (terrainData.markers && Array.isArray(terrainData.markers)) {
+                                    terrainData.markers.forEach(mData => {
+                                        try {
+                                            const markerDiv = document.createElement('div');
+                                            markerDiv.classList.add('marker');
+                                            markerDiv.style.position = 'absolute';
+                                            document.getElementById('canvas-container').appendChild(markerDiv);
 
-                        // 只有在成功加載後才隱藏工具欄
-                        if (typeof hideSystemToolbar === 'function') {
-                             hideSystemToolbar();
-                        }
+                                            let markerIconElement;
+                                            if (mData.iconSrc) {
+                                                markerIconElement = document.createElement('img');
+                                                markerIconElement.classList.add('marker-icon');
+                                                markerIconElement.src = mData.iconSrc;
+                                                markerIconElement.style.display = 'block';
+                                                markerIconElement.style.objectFit = 'contain';
+                                            } else {
+                                                markerIconElement = document.createElement('div');
+                                                markerIconElement.classList.add('marker-icon');
+                                                markerIconElement.textContent = mData.icon || "📍";
+                                                markerIconElement.style.color = mData.color || "red";
+                                                markerIconElement.style.lineHeight = '1';
+                                                markerIconElement.style.textAlign = 'center';
+                                            }
+                                            markerDiv.appendChild(markerIconElement);
 
+                                            const markerLabel = document.createElement('div');
+                                            markerLabel.classList.add('marker-label');
+                                            markerLabel.textContent = mData.label;
+                                            const labelColor = mData.color || "red";
+                                            markerLabel.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
+                                            markerLabel.style.color = labelColor;
+                                            markerLabel.style.border = `1px solid ${labelColor}`;
+                                            markerLabel.style.borderRadius = '3px';
+                                            markerLabel.style.padding = '2px 5px';
+                                            markerLabel.style.whiteSpace = 'nowrap';
+                                            markerLabel.style.marginTop = '2px';
+                                            markerDiv.appendChild(markerLabel);
+
+                                            // 重新綁定事件
+                                            setupMarkerEvents(markerDiv);
+                                            markerDiv.addEventListener('contextmenu', handleMarkerContextMenu);
+                                            markerDiv.addEventListener('touchstart', handleMarkerTouchStart);
+                                            markerDiv.addEventListener('touchend', handleMarkerTouchEnd);
+
+                                            const newMarker = {
+                                                element: markerDiv,
+                                                position: new THREE.Vector3(mData.position.x, mData.position.y, mData.position.z),
+                                                label: mData.label,
+                                                icon: mData.icon,
+                                                iconSrc: mData.iconSrc,
+                                                color: mData.color
+                                            };
+                                            markers.push(newMarker);
+                                        } catch (err) {
+                                            console.error("恢復單個標註失敗:", err);
+                                        }
+                                    });
+                                    updateMarkerPositions();
+                                }
+
+                                // --- 3. 清除並恢復 3D 線條 ---
+                                // 清除現有線條
+                                tube3DMeshes.forEach(mesh => scene.remove(mesh));
+                                tube3DMeshes = [];
+
+                                // 恢復保存的線條
+                                if (terrainData.drawings3D && Array.isArray(terrainData.drawings3D)) {
+                                    terrainData.drawings3D.forEach(lineData => {
+                                        try {
+                                            const points = lineData.points.map(p => new THREE.Vector3(p.x, p.y, p.z));
+
+                                            // 至少需要兩個點才能構成線
+                                            if (points.length < 2) return;
+
+                                            const curve = new THREE.CatmullRomCurve3(points);
+                                            const tubeGeometry = new THREE.TubeGeometry(
+                                                curve,
+                                                points.length * 10,
+                                                0.3,
+                                                8,
+                                                false
+                                            );
+                                            const tubeMaterial = new THREE.MeshStandardMaterial({
+                                                color: new THREE.Color(lineData.color),
+                                                metalness: 0.3,
+                                                roughness: 0.7,
+                                            });
+                                            const newTube = new THREE.Mesh(tubeGeometry, tubeMaterial);
+
+                                            // 為了能再次保存，我們需要重建 parameters.path
+                                            // Three.js 的 TubeGeometry 會保存 path，但為了保險起見確保它存在
+
+                                            scene.add(newTube);
+                                            tube3DMeshes.push(newTube);
+                                        } catch (err) {
+                                            console.error("恢復 3D 線條失敗:", err);
+                                        }
+                                    });
+
+                                    // 重置 3D 繪圖歷史記錄
+                                    tube3DMeshHistory = [];
+                                    tube3DMeshHistoryIndex = -1;
+                                    save3DHistory();
+                                }
+
+                                alert('專案載入成功！');
+
+                                if (typeof hideSystemToolbar === 'function') {
+                                     hideSystemToolbar();
+                                }
+
+                                // 如果在地圖模式，刷新地圖
+                                if (isMapMode) {
+                                    generate2DMap();
+                                }
+
+                            } catch (error) {
+                                console.error('處理數據時發生錯誤:', error);
+                                alert('載入失敗: ' + error.message);
+                            }
+                        };
+
+                        reader.readAsText(file);
+                        event.target.value = '';
                     } catch (error) {
-                        console.error('處理地形數據時發生錯誤:', error);
-                        alert('載入地形數據時發生錯誤: ' + error.message);
+                        console.error('loadTerrain 錯誤:', error);
+                        alert('文件處理錯誤');
                     }
-                };
-
-                reader.onerror = function() {
-                    console.error("文件讀取錯誤:", reader.error);
-                    alert("讀取文件時發生錯誤");
-                };
-
-                console.log("開始讀取文件內容 (readAsText)");
-                reader.readAsText(file);
-                event.target.value = ''; // 清空選擇，以便可以再次選擇同一個文件
-            } catch (error) {
-                console.error('loadTerrain 函數外部錯誤:', error);
-                alert('處理文件選擇時發生錯誤: ' + error.message);
-            }
-        }
+                }
 
         function resetTerrain() {
            try {
@@ -6859,149 +6985,225 @@
         }
 
         function generate2DMap() {
-            try {
-                console.time('generate2DMap');
+                    try {
+                        console.time('generate2DMap');
 
-                // 獲取畫布和上下文
-                const mapCanvas = document.getElementById('map-canvas');
-                if (!mapCanvas) {
-                    console.error('找不到地圖畫布元素');
-                    return;
-                }
-
-                const mapContext = mapCanvas.getContext('2d');
-                if (!mapContext) {
-                    console.error('無法獲取地圖畫布上下文');
-                    return;
-                }
-
-              const mapContainer = document.getElementById('map-container');
-              if (!mapContainer) {
-                  console.error('找不到地圖容器元素');
-                  return;
-              }
-
-              // 獲取調試標誌
-              const debugMode = document.getElementById('debug-water-boundary').checked;
-
-                // 設置畫布尺寸
-                mapCanvas.width = mapContainer.offsetWidth;
-                mapCanvas.height = mapContainer.offsetHeight;
-
-                // 同步更新其他畫布尺寸
-                if (mapDrawingCanvas) {
-                    mapDrawingCanvas.width = mapCanvas.width;
-                    mapDrawingCanvas.height = mapCanvas.height;
-
-                    // 重新繪製歷史內容（添加更多錯誤檢查）
-                    const mapDrawingContext = mapDrawingCanvas.getContext('2d');
-                    mapDrawingContext.clearRect(0, 0, mapDrawingCanvas.width, mapDrawingCanvas.height);
-
-                    if (mapHistoryIndex >= 0 && mapDrawingHistory[mapHistoryIndex]) {
-                        const historyItem = mapDrawingHistory[mapHistoryIndex];
-                        const historyCanvas = historyItem.canvas;
-
-                        // 檢查歷史畫布是否有效
-                        if (historyCanvas &&
-                            historyCanvas.width > 0 &&
-                            historyCanvas.height > 0 &&
-                            mapDrawingCanvas.width > 0 &&
-                            mapDrawingCanvas.height > 0) {
-
-                            try {
-                                // 先清除畫布
-                                mapDrawingContext.clearRect(0, 0, mapDrawingCanvas.width, mapDrawingCanvas.height);
-
-                                // 直接繪製歷史畫布（不應用任何變換）
-                                mapDrawingContext.drawImage(historyCanvas, 0, 0);
-
-                                console.log("成功從歷史記錄重繪畫布");
-                            } catch (error) {
-                                console.error("從歷史繪製錯誤:", error, "歷史尺寸:", historyCanvas.width, "x", historyCanvas.height, "目標尺寸:", mapDrawingCanvas.width, "x", mapDrawingCanvas.height);
-                            }
-                        } else {
-                            console.warn("無效的歷史畫布或目標畫布尺寸");
+                        // 獲取畫布和上下文
+                        const mapCanvas = document.getElementById('map-canvas');
+                        if (!mapCanvas) {
+                            console.error('找不到地圖畫布元素');
+                            return;
                         }
+
+                        const mapContext = mapCanvas.getContext('2d');
+                        if (!mapContext) {
+                            console.error('無法獲取地圖畫布上下文');
+                            return;
+                        }
+
+                      const mapContainer = document.getElementById('map-container');
+                      if (!mapContainer) {
+                          console.error('找不到地圖容器元素');
+                          return;
+                      }
+
+                      // 獲取調試標誌
+                      const debugMode = document.getElementById('debug-water-boundary').checked;
+
+                        // 設置畫布尺寸
+                        mapCanvas.width = mapContainer.offsetWidth;
+                        mapCanvas.height = mapContainer.offsetHeight;
+
+                        // 同步更新其他畫布尺寸
+                        if (mapDrawingCanvas) {
+                            mapDrawingCanvas.width = mapCanvas.width;
+                            mapDrawingCanvas.height = mapCanvas.height;
+
+                            // 重新繪製歷史內容（添加更多錯誤檢查）
+                            const mapDrawingContext = mapDrawingCanvas.getContext('2d');
+                            mapDrawingContext.clearRect(0, 0, mapDrawingCanvas.width, mapDrawingCanvas.height);
+
+                            if (mapHistoryIndex >= 0 && mapDrawingHistory[mapHistoryIndex]) {
+                                const historyItem = mapDrawingHistory[mapHistoryIndex];
+                                const historyCanvas = historyItem.canvas;
+
+                                // 檢查歷史畫布是否有效
+                                if (historyCanvas &&
+                                    historyCanvas.width > 0 &&
+                                    historyCanvas.height > 0 &&
+                                    mapDrawingCanvas.width > 0 &&
+                                    mapDrawingCanvas.height > 0) {
+
+                                    try {
+                                        // 先清除畫布
+                                        mapDrawingContext.clearRect(0, 0, mapDrawingCanvas.width, mapDrawingCanvas.height);
+
+                                        // 直接繪製歷史畫布（不應用任何變換）
+                                        mapDrawingContext.drawImage(historyCanvas, 0, 0);
+
+                                        console.log("成功從歷史記錄重繪畫布");
+                                    } catch (error) {
+                                        console.error("從歷史繪製錯誤:", error, "歷史尺寸:", historyCanvas.width, "x", historyCanvas.height, "目標尺寸:", mapDrawingCanvas.width, "x", mapDrawingCanvas.height);
+                                    }
+                                } else {
+                                    console.warn("無效的歷史畫布或目標畫布尺寸");
+                                }
+                            }
+                        }
+
+                        if (highlightCanvas) {
+                            highlightCanvas.width = mapCanvas.width;
+                            highlightCanvas.height = mapCanvas.height;
+                        }
+
+                        // 清除整個畫布並設置為純白色
+                        mapContext.fillStyle = '#ffffff';
+                        mapContext.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
+
+                        // 保存畫布狀態
+                        mapContext.save();
+
+                        // 關鍵修改：使用簡單直接變換，與 CSS 變換保持一致
+                        mapContext.setTransform(currentScale, 0, 0, currentScale, mapOffset.x, mapOffset.y);
+
+                        // 計算地圖繪製參數
+                        const positions = terrain.geometry.attributes.position.array;
+                        const gridSegments = 100;
+                        const gridSize = gridSegments + 1;
+
+                        // 計算畫布上的繪製尺寸
+                        const maxSize = Math.min(mapCanvas.width, mapCanvas.height) * 0.8;
+                        pixelSize = maxSize / gridSegments;
+                        const offsetX = (mapCanvas.width - gridSegments * pixelSize) / 2;
+                        const offsetY = (mapCanvas.height - gridSegments * pixelSize) / 2;
+
+                        // 創建統一的高度數據網格
+                        const heightData = createUnifiedHeightGrid(positions, gridSize);
+
+                        // 先繪製一個完全純白的背景矩形 (覆蓋整個地圖區域)
+                        mapContext.fillStyle = '#ffffff';
+                        mapContext.fillRect(offsetX, offsetY, gridSegments * pixelSize, gridSegments * pixelSize);
+
+                        // 繪製等高線或地形顏色
+                        if (!debugMode) {
+                            drawOnlyContours(mapContext, heightData, offsetX, offsetY, pixelSize);
+                        } else {
+                            if (typeof drawExactContours === 'function') {
+                                drawExactContours(mapContext, heightData, offsetX, offsetY, pixelSize);
+                            } else {
+                                drawSmoothContours(mapContext, positions, gridSize, heightData.minHeight, heightData.maxHeight, offsetX, offsetY, pixelSize);
+                            }
+                        }
+
+                        // 繪製網格和其他元素
+                        drawGrid(mapContext, gridSegments, offsetX, offsetY, pixelSize, 25);
+                        drawScaleBar(mapContext, offsetX, offsetY + gridSegments * pixelSize + 30, gridSegments, pixelSize);
+
+                        // --- 修改處：在標記之前或之後繪製 3D 線條 ---
+                        draw3DDrawingsOnMap(mapContext, offsetX, offsetY, pixelSize);
+
+                        // 繪製標記
+                        drawMarkersOnMap(mapContext, offsetX, offsetY, pixelSize);
+
+                        // 繪製連線和剖面點
+                        if (isPolylineMode && polylinePoints.length > 0) {
+                            drawPolyline(mapContext, offsetX, offsetY);
+                        }
+                        if (isProfileMode && profilePoints.length > 0) {
+                            drawProfileLine();
+                        }
+
+                        // 恢復畫布狀態
+                        mapContext.restore();
+
+                        // 如果正在懸停，需要強制重繪高亮點
+                        if (isProfileHovering && profileHighlightPoint) {
+                            drawHighlightPointOnly();
+                        }
+
+                        // 在 generate2DMap 函數末尾
+                        if (mapContext) {  // 添加這個檢查
+                            drawDebugInfo(mapContext);
+                        }
+
+                        console.timeEnd('generate2DMap');
+                    } catch (error) {
+                        console.error('生成地圖時發生錯誤:', error);
                     }
                 }
 
-                if (highlightCanvas) {
-                    highlightCanvas.width = mapCanvas.width;
-                    highlightCanvas.height = mapCanvas.height;
-                }
+                // 新增函數：將 3D 線條繪製到 2D 地圖上
+                function draw3DDrawingsOnMap(context, offsetX, offsetY, pixelSize) {
+                    if (!tube3DMeshes || tube3DMeshes.length === 0) return;
 
-                // 清除整個畫布並設置為純白色
-                mapContext.fillStyle = '#ffffff';
-                mapContext.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
+                    // 地形參數，需與 drawMarkersOnMap 保持一致的映射邏輯
+                    const terrainSizeMeters = 100;
+                    const gridSegments = 100;
+                    const centerOffset = (gridSegments * pixelSize) / 2;
 
-                // 保存畫布狀態
-                mapContext.save();
+                    tube3DMeshes.forEach(mesh => {
+                        // 檢查是否為 TubeGeometry 並且包含路徑
+                        if (!mesh.geometry || !mesh.geometry.parameters || !mesh.geometry.parameters.path) {
+                            return;
+                        }
 
-                // 關鍵修改：使用簡單直接變換，與 CSS 變換保持一致
-                mapContext.setTransform(currentScale, 0, 0, currentScale, mapOffset.x, mapOffset.y);
+                        // 從生成管道的路徑中獲取點 (取樣 50 個點以保持平滑)
+                        const points = mesh.geometry.parameters.path.getPoints(50);
+                        if (points.length < 2) return;
 
-                // 計算地圖繪製參數
-                const positions = terrain.geometry.attributes.position.array;
-                const gridSegments = 100;
-                const gridSize = gridSegments + 1;
+                        context.beginPath();
 
-                // 計算畫布上的繪製尺寸
-                const maxSize = Math.min(mapCanvas.width, mapCanvas.height) * 0.8;
-                pixelSize = maxSize / gridSegments;
-                const offsetX = (mapCanvas.width - gridSegments * pixelSize) / 2;
-                const offsetY = (mapCanvas.height - gridSegments * pixelSize) / 2;
+                        // 獲取 3D 物體的顏色
+                        const color = mesh.material.color;
+                        context.strokeStyle = `rgb(${Math.round(color.r * 255)}, ${Math.round(color.g * 255)}, ${Math.round(color.b * 255)})`;
 
-                // 創建統一的高度數據網格
-                const heightData = createUnifiedHeightGrid(positions, gridSize);
+                        // 調整線寬，使其隨地圖縮放
+                        context.lineWidth = 3 / currentScale;
+                        context.lineCap = 'round';
+                        context.lineJoin = 'round';
 
-                // 先繪製一個完全純白的背景矩形 (覆蓋整個地圖區域)
-                mapContext.fillStyle = '#ffffff';
-                mapContext.fillRect(offsetX, offsetY, gridSegments * pixelSize, gridSegments * pixelSize);
+                        let isFirst = true;
+                        points.forEach(point => {
+                            // 3D 點通常是世界座標，地形中心在 (0,0,0)
+                            // 將 3D 座標 (X, Z) 映射到 2D 地圖 (X, Y)
+                            const vec = point.clone();
 
-                // 繪製等高線或地形顏色
-                if (!debugMode) {
-                    drawOnlyContours(mapContext, heightData, offsetX, offsetY, pixelSize);
-                } else {
-                    if (typeof drawExactContours === 'function') {
-                        drawExactContours(mapContext, heightData, offsetX, offsetY, pixelSize);
-                    } else {
-                        drawSmoothContours(mapContext, positions, gridSize, heightData.minHeight, heightData.maxHeight, offsetX, offsetY, pixelSize);
+                            // 計算地圖上的像素位置
+                            const mapX = (vec.x / terrainSizeMeters * gridSegments * pixelSize) + offsetX + centerOffset;
+                            const mapY = (vec.z / terrainSizeMeters * gridSegments * pixelSize) + offsetY + centerOffset;
+
+                            if (isFirst) {
+                                context.moveTo(mapX, mapY);
+                                isFirst = false;
+                            } else {
+                                context.lineTo(mapX, mapY);
+                            }
+                        });
+                        context.stroke();
+                    });
+
+                    // 如果當前正在繪製中（還未生成 mesh 但有預覽），也嘗試繪製
+                    if (is3DDrawingMode && tube3DMesh && tube3DMesh.geometry && tube3DMesh.geometry.parameters && tube3DMesh.geometry.parameters.path) {
+                         const points = tube3DMesh.geometry.parameters.path.getPoints(50);
+                         if (points.length >= 2) {
+                            context.beginPath();
+                            const color = tube3DMesh.material.color;
+                            context.strokeStyle = `rgb(${Math.round(color.r * 255)}, ${Math.round(color.g * 255)}, ${Math.round(color.b * 255)})`;
+                            context.lineWidth = 3 / currentScale;
+                            context.lineCap = 'round';
+                            context.lineJoin = 'round';
+
+                            let isFirst = true;
+                            points.forEach(point => {
+                                const mapX = (point.x / terrainSizeMeters * gridSegments * pixelSize) + offsetX + centerOffset;
+                                const mapY = (point.z / terrainSizeMeters * gridSegments * pixelSize) + offsetY + centerOffset;
+                                if (isFirst) { context.moveTo(mapX, mapY); isFirst = false; }
+                                else { context.lineTo(mapX, mapY); }
+                            });
+                            context.stroke();
+                         }
                     }
                 }
-
-                // 繪製網格和其他元素
-                drawGrid(mapContext, gridSegments, offsetX, offsetY, pixelSize, 25);
-                drawScaleBar(mapContext, offsetX, offsetY + gridSegments * pixelSize + 30, gridSegments, pixelSize);
-
-                // 繪製標記
-                drawMarkersOnMap(mapContext, offsetX, offsetY, pixelSize);
-
-                // 繪製連線和剖面點
-                if (isPolylineMode && polylinePoints.length > 0) {
-                    drawPolyline(mapContext, offsetX, offsetY);
-                }
-                if (isProfileMode && profilePoints.length > 0) {
-                    drawProfileLine();
-                }
-
-                // 恢復畫布狀態
-                mapContext.restore();
-
-                // 如果正在懸停，需要強制重繪高亮點
-                if (isProfileHovering && profileHighlightPoint) {
-                    drawHighlightPointOnly();
-                }
-
-                // 在 generate2DMap 函數末尾
-                if (mapContext) {  // 添加這個檢查
-                    drawDebugInfo(mapContext);
-                }
-
-                console.timeEnd('generate2DMap');
-            } catch (error) {
-                console.error('生成地圖時發生錯誤:', error);
-            }
-        }
 
         // 新增專門只繪製等高線的函數，不渲染任何地形顏色
         function drawOnlyContours(context, heightData, offsetX, offsetY, pixelSize) {
