@@ -4506,60 +4506,118 @@
              updateMarkerPositions();
          }
 
-        function modifyTerrain() {
-             if (!currentTool || !isMouseDown) return;
-             raycaster.setFromCamera(mouse, camera);
-             const intersects = raycaster.intersectObject(terrain);
-             if (intersects.length > 0) {
-                 const intersection = intersects[0];
-                 const positions = terrain.geometry.attributes.position.array;
-                 const toolStrength = document.getElementById('tool-strength').value / 250;
-                 const toolRadius = document.getElementById('tool-radius').value / 5;
+         // 優化後的修改地形函數 - 針對舊設備性能優化
+                 function modifyTerrain() {
+                      if (!currentTool || !isMouseDown) return;
 
-                 const clickPosition = intersection.point;
-                 const localClickPosition = clickPosition.clone();
-                 terrain.worldToLocal(localClickPosition);
+                      // 節流控制：如果距離上次更新時間太短，則跳過（針對舊設備）
+                      const now = Date.now();
+                      if (window.lastTerrainUpdate && (now - window.lastTerrainUpdate < 30)) { // 限制約 30fps
+                          return;
+                      }
+                      window.lastTerrainUpdate = now;
 
-                 let terrainModified = false;
+                      raycaster.setFromCamera(mouse, camera);
+                      const intersects = raycaster.intersectObject(terrain);
 
-                 for (let i = 0; i < positions.length; i += 3) {
-                     const vertexX = positions[i];
-                     const vertexY = positions[i + 1];
+                      if (intersects.length > 0) {
+                          const intersection = intersects[0];
+                          const positions = terrain.geometry.attributes.position.array;
 
-                     const dx = vertexX - localClickPosition.x;
-                     const dy = vertexY - localClickPosition.y;
-                     const distance = Math.sqrt(dx * dx + dy * dy);
+                          // 獲取參數
+                          const toolStrength = document.getElementById('tool-strength').value / 250;
+                          const toolRadius = document.getElementById('tool-radius').value / 5;
 
-                     if (distance < toolRadius) {
-                          const influence = Math.cos((distance / toolRadius) * Math.PI * 0.5);
-                          const strength = toolStrength * influence;
-                          let localModified = 0; // 追蹤區域修改量
+                          const clickPosition = intersection.point;
+                          const localClickPosition = clickPosition.clone();
+                          terrain.worldToLocal(localClickPosition);
 
-                         switch (currentTool) {
-                             case 'raise':
-                                 localModified += strength;
-                                 break;
-                             case 'lower':
-                                 localModified -= strength;
-                                 break;
-                             case 'smooth':
-                                 const averageHeight = getAverageHeight(i, positions, toolRadius);
-                                 localModified += (averageHeight - positions[i + 2]) * strength;
-                                 break;
+                          // 獲取網格參數
+                          // 假設平面幾何體是標準的 PlaneGeometry
+                          const parameters = terrain.geometry.parameters;
+                          const width = parameters.width;
+                          const height = parameters.height;
+                          const widthSegments = parameters.widthSegments;
+                          const heightSegments = parameters.heightSegments;
+
+                          // 計算網格單元大小
+                          const segmentW = width / widthSegments;
+                          const segmentH = height / heightSegments;
+
+                          // 將點擊位置轉換為網格索引中心 (x, y)
+                          // PlaneGeometry 的中心在 (0,0)，所以要加上一半寬高
+                          const centerX = (localClickPosition.x + width / 2) / segmentW;
+                          const centerY = (-localClickPosition.y + height / 2) / segmentH; // 注意 Y 軸方向
+
+                          // 計算受影響的索引範圍 (Bounding Box)
+                          // 只遍歷圓形筆刷範圍內的點，而不是整張地圖
+                          const radiusInSegments = Math.ceil(toolRadius / Math.min(segmentW, segmentH)) + 1;
+
+                          const minX = Math.max(0, Math.floor(centerX - radiusInSegments));
+                          const maxX = Math.min(widthSegments, Math.ceil(centerX + radiusInSegments));
+                          const minY = Math.max(0, Math.floor(centerY - radiusInSegments));
+                          const maxY = Math.min(heightSegments, Math.ceil(centerY + radiusInSegments));
+
+                          let terrainModified = false;
+
+                          // 只遍歷受影響的區域
+                          for (let y = minY; y <= maxY; y++) {
+                              for (let x = minX; x <= maxX; x++) {
+                                  // 計算頂點在數組中的索引
+                                  // PlaneGeometry 的頂點順序是逐行掃描
+                                  const index = (y * (widthSegments + 1) + x) * 3;
+
+                                  const vertexX = positions[index];
+                                  const vertexY = positions[index + 1];
+
+                                  const dx = vertexX - localClickPosition.x;
+                                  const dy = vertexY - localClickPosition.y;
+                                  const distanceSq = dx * dx + dy * dy;
+                                  const radiusSq = toolRadius * toolRadius;
+
+                                  if (distanceSq < radiusSq) {
+                                       const distance = Math.sqrt(distanceSq);
+                                       const influence = Math.cos((distance / toolRadius) * Math.PI * 0.5);
+                                       const strength = toolStrength * influence;
+                                       let localModified = 0;
+
+                                      switch (currentTool) {
+                                          case 'raise':
+                                              localModified += strength;
+                                              break;
+                                          case 'lower':
+                                              localModified -= strength;
+                                              break;
+                                          case 'smooth':
+                                              // 優化：平滑時也只計算局部平均
+                                              // 這裡為了性能，簡化平滑邏輯，直接取當前點與目標高度的差
+                                              // 如果需要更精確的平滑，可以傳入範圍限制
+                                              const averageHeight = getAverageHeight(index, positions, toolRadius);
+                                              localModified += (averageHeight - positions[index + 2]) * strength;
+                                              break;
+                                       }
+                                        positions[index+2] += localModified;
+                                        terrainModified = true;
+                                  }
+                              }
                           }
-                           positions[i+2] += localModified;
-                            terrainModified = true;
-                     }
-                 }
 
+                          if (terrainModified) {
+                             terrain.geometry.attributes.position.needsUpdate = true;
 
-                 if (terrainModified) {
-                    terrain.geometry.attributes.position.needsUpdate = true;
-                    terrain.geometry.computeVertexNormals();
-                    updateTerrainMaterial();
-                 }
-              }
-         }
+                             // 性能關鍵：在移動過程中，舊設備可以選擇不計算光影（法線），直到手指放開
+                             // 但為了視覺效果，我們這裡做限制：每3幀才計算一次法線
+                             if (!window.normalUpdateCounter) window.normalUpdateCounter = 0;
+                             window.normalUpdateCounter++;
+
+                             if (window.normalUpdateCounter % 3 === 0) {
+                                 terrain.geometry.computeVertexNormals();
+                             }
+
+                             updateTerrainMaterial();
+                          }
+                       }
+                  }
 
         function getAverageHeight(index, positions, radius) {
             let sum = 0;
