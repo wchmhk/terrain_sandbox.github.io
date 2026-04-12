@@ -339,16 +339,16 @@
 
         .protractor-tool {
             position: fixed;
-            width: 300px; /* 確保 HTML 和 CSS 尺寸一致 */
-            height: 300px;
-            border: 2px solid #000;
+            width: 340px;
+            height: 340px;
+            border: none;
             border-radius: 50%;
             background: rgba(255, 255, 255, 0); /* 完全透明 */
             cursor: move;
-            z-index: 1002; /* 確保在其他元素之上 */
-            touch-action: none; /* 添加這行 */
-            -webkit-user-select: none; /* 添加這行 */
-            user-select: none; /* 添加這行 */
+            z-index: 1002;
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
         }
 
         .protractor-tool.hidden {
@@ -754,7 +754,21 @@
         </div>
     </div>
     <div id="protractor-tool" class="protractor-tool hidden">
-    <canvas id="protractor-canvas" width="300" height="300"></canvas>
+    <canvas id="protractor-canvas" width="340" height="340"></canvas>
+</div>
+
+<!-- 旋轉工具面板（量角器 + 直尺旋轉按鈕，地圖模式下顯示） -->
+<div id="rotation-panel" style="display:none; position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:1100; background:rgba(255,255,255,0.92); border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,0.18); padding:6px 14px; flex-direction:row; gap:18px; align-items:center;">
+    <div id="protractor-rotate-group" style="display:none; flex-direction:row; align-items:center; gap:6px;">
+        <button id="protractor-rotate-ccw" style="font-size:18px; background:none; border:1px solid #aaa; border-radius:6px; padding:4px 10px; cursor:pointer;" title="量角器向左旋轉90°">↺ 90°</button>
+        <span style="font-size:12px; color:#555;">量角器</span>
+        <button id="protractor-rotate-cw"  style="font-size:18px; background:none; border:1px solid #aaa; border-radius:6px; padding:4px 10px; cursor:pointer;" title="量角器向右旋轉90°">↻ 90°</button>
+    </div>
+    <div id="ruler-rotate-group" style="display:none; flex-direction:row; align-items:center; gap:6px;">
+        <button id="ruler-rotate-ccw" style="font-size:18px; background:none; border:1px solid #aaa; border-radius:6px; padding:4px 10px; cursor:pointer;" title="直尺向左旋轉0.5°">↺ 0.5°</button>
+        <span style="font-size:12px; color:#555;">直尺</span>
+        <button id="ruler-rotate-cw"  style="font-size:18px; background:none; border:1px solid #aaa; border-radius:6px; padding:4px 10px; cursor:pointer;" title="直尺向右旋轉0.5°">↻ 0.5°</button>
+    </div>
 </div>
 
 <!-- 縱剖面面板 -->
@@ -980,6 +994,10 @@
                     📊
                     <span class="tool-tooltip">縱剖面分析</span>
                 </button>
+                <button class="tool-button" id="ruler-toggle">
+                    📏
+                    <span class="tool-tooltip">直尺工具</span>
+                </button>
             </div>
             <div class="tool-group protractor-controls" style="display: none;">
                 <button class="tool-button" id="protractor-recall">
@@ -1161,7 +1179,21 @@
         let totalDistance = 0;
         let polylineLayer = null;
         let pixelSize = 1;
+
+        // 直尺工具狀態
+        let isRulerMode = false;
+        let rulerCanvas = null;
+        let rulerCtx = null;
+        // 直尺狀態（以 canvas 畫素為單位，scale=1 時）
+        let rulerState = {
+            cx: 400, cy: 300,  // 中心點（canvas 邏輯像素）
+            wCm: 10, hCm: 6,   // 寬高（公分單位，不隨縮放改變）
+            angle: 0,          // 旋轉角度（弧度）
+            snapToProtractor: false  // 是否吸附在量角器上
+        };
+        let rulerDrag = null;  // 目前拖移的控制點資訊
         let protractorVisible = false;
+        let protractorAngle = 0; // 量角器旋轉角度（度數）
         let isDraggingMap = false; // 是否正在拖移地圖
         let dragStart = { x: 0, y: 0 }; // 拖移開始的位置
         let mapOffset = { x: 0, y: 0 }; // 地圖的偏移量
@@ -1863,6 +1895,9 @@
                 polylineLayer.style.transform = transform;
                 polylineLayer.style.transformOrigin = '0 0';
             }
+
+            // 直尺隨地圖縮放/平移
+            if (typeof redrawRulerIfActive === 'function') redrawRulerIfActive();
         }
 
         function updateMapPosition() {
@@ -1912,8 +1947,8 @@
 
             ctx.beginPath();
             ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-            ctx.strokeStyle = '#000';
-            ctx.lineWidth = 2 * currentScale;
+            ctx.strokeStyle = 'rgba(0,0,0,0.50)';
+            ctx.lineWidth = 1.2 * currentScale;
             ctx.stroke();
 
             ctx.beginPath();
@@ -1921,8 +1956,8 @@
             ctx.lineTo(centerX + crosshairSize, centerY);
             ctx.moveTo(centerX, centerY - crosshairSize);
             ctx.lineTo(centerX, centerY + crosshairSize);
-            ctx.strokeStyle = '#ff0000';
-            ctx.lineWidth = 2 * currentScale;
+            ctx.strokeStyle = 'rgba(255,0,0,0.55)';
+            ctx.lineWidth = 1 * currentScale;
             ctx.stroke();
 
 
@@ -1934,18 +1969,18 @@
                 if (angle % 30 === 0) {
                     inner = crosshairSize + 0 * currentScale;
                     outer = radius;
-                    lineWidth = 2 * currentScale;
-                    strokeStyle = '#000';
+                    lineWidth = 1.2 * currentScale;
+                    strokeStyle = 'rgba(0,0,0,0.65)';
                 } else if (angle % 10 === 0) {
                     inner = crosshairSize + 5 * currentScale;
                     outer = radius * currentScale;
-                    lineWidth = 1.5 * currentScale;
-                    strokeStyle = '#555';
+                    lineWidth = 0.8 * currentScale;
+                    strokeStyle = 'rgba(0,0,0,0.42)';
                 } else if (angle % 2 === 0) {
                      inner = crosshairSize + 105 * currentScale;
                     outer = radius * currentScale;
                    lineWidth = 0.5 * currentScale;
-                    strokeStyle = '#000';
+                    strokeStyle = 'rgba(0,0,0,0.26)';
                }
 
                ctx.beginPath();
@@ -1966,12 +2001,17 @@
                    const labelRadius = outer - (25 * currentScale);
                     const labelX = centerX + labelRadius * Math.cos(rad);
                    const labelY = centerY + labelRadius * Math.sin(rad);
-                  ctx.font = `${14 * currentScale}px Arial`;
-                  ctx.fillStyle = '#000';
+                  ctx.font = `${12 * currentScale}px Arial`;
+                  ctx.fillStyle = 'rgba(0,0,0,0.60)';
                    ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
                    const displayAngle = (angle === 0) ? '0' : angle.toString();
-                    ctx.fillText(displayAngle, labelX, labelY);
+                    // 逆向旋轉讓文字保持正向
+                    ctx.save();
+                    ctx.translate(labelX, labelY);
+                    ctx.rotate(-protractorAngle * Math.PI / 180);
+                    ctx.fillText(displayAngle, 0, 0);
+                    ctx.restore();
                 }
             }
 
@@ -2020,12 +2060,15 @@
         function showProtractor() {
             protractorTool.classList.remove('hidden');
             protractorVisible = true;
+            protractorTool.style.transform = `rotate(${protractorAngle}deg)`;
+            _updateRotationPanel();
         }
 
         // 隱藏量角尺
         function hideProtractor() {
             protractorTool.classList.add('hidden');
             protractorVisible = false;
+            _updateRotationPanel();
         }
 
         // 切換量角尺顯示狀態
@@ -2040,6 +2083,11 @@
         // 監聽量角尺按鈕
         document.getElementById('protractor-toggle').addEventListener('click', () => {
             toggleProtractor();
+        });
+
+        // 監聽直尺按鈕
+        document.getElementById('ruler-toggle').addEventListener('click', () => {
+            toggleRuler();
         });
 
         // 使量角尺可拖拽
@@ -2069,7 +2117,8 @@
             if (isDragging) {
                 protractorTool.style.left = `${e.clientX - offset.x}px`;
                 protractorTool.style.top = `${e.clientY - offset.y}px`;
-                e.preventDefault(); // 防止其他事件干擾
+                e.preventDefault();
+                if (typeof _onProtractorMoved === 'function') _onProtractorMoved();
                 return; // 如果正在拖拽量角尺，優先處理這個事件
             }
 
@@ -2102,6 +2151,7 @@
                 const touch = e.touches[0];
                 protractorTool.style.left = `${touch.clientX - offset.x}px`;
                 protractorTool.style.top = `${touch.clientY - offset.y}px`;
+                if (typeof _onProtractorMoved === 'function') _onProtractorMoved();
             }
         }, { passive: false });
 
@@ -3154,6 +3204,26 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.shadowMap.enabled = true;
             document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            // 3D 橡皮擦點擊偵測（需 renderer 已建立）
+            renderer.domElement.addEventListener('click', (event) => {
+                if (is3DDrawingMode && isErasing) {
+                    const rect = renderer.domElement.getBoundingClientRect();
+                    const mouseX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                    const mouseY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+                    raycaster.setFromCamera(new THREE.Vector2(mouseX, mouseY), camera);
+                    const intersects = raycaster.intersectObjects(tube3DMeshes);
+                    if (intersects.length > 0) {
+                        const mesh = intersects[0].object;
+                        scene.remove(mesh);
+                        const index = tube3DMeshes.indexOf(mesh);
+                        if (index > -1) {
+                            tube3DMeshes.splice(index, 1);
+                            save3DHistory();
+                        }
+                    }
+                }
+            });
 
             raycaster = new THREE.Raycaster();
             mouse = new THREE.Vector2();
@@ -6401,6 +6471,10 @@
                     resetPolylineTool();
                     resetProfileTool();
                     resetMapDrawingTools();
+                    // 隱藏量角器和直尺
+                    if (protractorVisible) hideProtractor();
+                    if (isRulerMode) toggleRuler();
+                    _updateRotationPanel();
 
                     // 還原底部工具欄顯示
                     const bottomToolbar = document.querySelector('.bottom-toolbar');
@@ -6459,6 +6533,10 @@
                             drawingToolbar.style.display = 'flex';
                             resetProfileTool();
                             resetMapDrawingTools();
+                            // 隱藏量角器和直尺
+                            if (protractorVisible) hideProtractor();
+                            if (isRulerMode) toggleRuler();
+                            _updateRotationPanel();
 
                             // 隱藏高亮層
                             if (highlightCanvas) {
@@ -8177,27 +8255,6 @@
             }
         }
 
-        renderer.domElement.addEventListener('click', (event) => {
-            if (is3DDrawingMode && isErasing) {
-                const rect = renderer.domElement.getBoundingClientRect();
-                const mouseX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-                const mouseY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-                raycaster.setFromCamera(new THREE.Vector2(mouseX, mouseY), camera);
-                const intersects = raycaster.intersectObjects(tube3DMeshes);
-
-                if (intersects.length > 0) {
-                    const mesh = intersects[0].object;
-                    scene.remove(mesh);
-                    const index = tube3DMeshes.indexOf(mesh);
-                    if (index > -1) {
-                        tube3DMeshes.splice(index, 1);
-                        save3DHistory();
-                    }
-                }
-            }
-        });
-
         // 修改 3D 線條的歷史記錄管理
         function save3DHistory() {
             // 保存路徑點而非 geometry clone，因為 BufferGeometry.clone() 不保留 parameters.path
@@ -8532,6 +8589,510 @@
             }
         }
         // ═══════════════════════════════════════════════════════════════
+        // 直尺工具系統
+        // 比例：1cm = 50m，250m = 5cm，每格 1cm
+        // ═══════════════════════════════════════════════════════════════
+
+        // 1cm 對應的 canvas 像素數
+        // 比例：1 格網格 = 10m，1cm = 50m = 5 格，cmPx = 5 * pixelSize
+        // 250m = 25 格 = 5cm ✓
+        function rulerCmPx() { return 5 * pixelSize; }
+
+        // SVG 命名空間輔助
+        function _svgEl(tag, attrs) {
+            const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+            for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+            return el;
+        }
+
+        function initRulerCanvas() {
+            if (rulerCanvas) return;
+            const mapContainer = document.getElementById('map-container');
+            if (!mapContainer) return;
+            const mc = document.getElementById('map-canvas');
+            const W = mc ? mc.width  : window.innerWidth;
+            const H = mc ? mc.height : window.innerHeight;
+
+            // 用 SVG 替代 canvas，實現矢量渲染（無鋸齒）
+            rulerCanvas = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            rulerCanvas.id = 'ruler-canvas';
+            rulerCanvas.setAttribute('width',  W);
+            rulerCanvas.setAttribute('height', H);
+            rulerCanvas.style.cssText = 'position:absolute;top:0;left:0;z-index:5;pointer-events:auto;transform-origin:0 0;overflow:visible;';
+            mapContainer.appendChild(rulerCanvas);
+
+            // rulerCtx 不再使用，設為 null
+            rulerCtx = null;
+            // 儲存 SVG 尺寸供 _rulerClientToCanvas 使用
+            rulerCanvas._w = W;
+            rulerCanvas._h = H;
+
+            // 初始位置：換算到邏輯座標中的可視中心（考慮當前縮放和偏移）
+            // screen center → logical: (screenCenter - mapOffset) / currentScale
+            const mapContainer2 = document.getElementById('map-container');
+            const mc2rect = mapContainer2 ? mapContainer2.getBoundingClientRect() : { width: W, height: H };
+            const visCx = (mc2rect.width  / 2 - mapOffset.x) / currentScale;
+            const visCy = (mc2rect.height / 2 - mapOffset.y) / currentScale;
+            rulerState.cx    = visCx;
+            rulerState.cy    = visCy;
+            rulerState.angle = 0;
+            rulerState.snapToProtractor = false;
+            bindRulerEvents();
+            // 套用當前地圖縮放的 CSS transform，確保與地圖對齊
+            rulerCanvas.style.transform = 'matrix(' + currentScale + ',0,0,' + currentScale + ',' + mapOffset.x + ',' + mapOffset.y + ')';
+            drawRuler();
+        }
+
+        function destroyRulerCanvas() {
+            if (!rulerCanvas) return;
+            rulerCanvas.remove();
+            rulerCanvas = null;
+            rulerCtx   = null;
+            rulerDrag  = null;
+            rulerState.snapToProtractor = false;
+        }
+
+        // ── SVG 繪製 ──────────────────────────────────────────────────
+        function drawRuler() {
+            if (!rulerCanvas) return;
+            // 清空 SVG
+            while (rulerCanvas.firstChild) rulerCanvas.removeChild(rulerCanvas.firstChild);
+
+            const { cx, cy, wCm, hCm, angle } = rulerState;
+            const cmPx = rulerCmPx();
+            // w/h 每次由 cm 單位換算，確保隨地圖 pixelSize 同步縮放
+            const w = wCm * cmPx;
+            const h = hCm * cmPx;
+            const cols = Math.round(wCm);
+            const rows = Math.round(hCm);
+            const x0 = -w / 2, y0 = -h / 2;
+            const angleDeg = angle * 180 / Math.PI;
+
+            // 主群組：以 cx,cy 為中心旋轉
+            const g = _svgEl('g', { transform: `translate(${cx},${cy}) rotate(${angleDeg})` });
+
+            // ── 網格線 ──
+            for (let c = 0; c <= cols; c++) {
+                const x = x0 + c * cmPx;
+                const isMajor = c % 10 === 0;
+                const isMid   = !isMajor && c % 5 === 0;
+                g.appendChild(_svgEl('line', {
+                    x1: x, y1: y0, x2: x, y2: y0 + h,
+                    stroke: isMajor ? 'rgba(0,60,180,0.90)' : isMid ? 'rgba(0,60,180,0.60)' : 'rgba(0,60,180,0.35)',
+                    'stroke-width': isMajor ? 1.4 : isMid ? 0.9 : 0.6
+                }));
+            }
+            for (let r = 0; r <= rows; r++) {
+                const y = y0 + r * cmPx;
+                const isMajor = r % 10 === 0;
+                const isMid   = !isMajor && r % 5 === 0;
+                g.appendChild(_svgEl('line', {
+                    x1: x0, y1: y, x2: x0 + w, y2: y,
+                    stroke: isMajor ? 'rgba(0,60,180,0.90)' : isMid ? 'rgba(0,60,180,0.60)' : 'rgba(0,60,180,0.35)',
+                    'stroke-width': isMajor ? 1.4 : isMid ? 0.9 : 0.6
+                }));
+            }
+
+            // ── 刻度數字 ──
+            const fontSize = Math.max(8, Math.min(11, cmPx * 0.55));
+            for (let c = 0; c <= cols; c += 5) {
+                const t = _svgEl('text', {
+                    x: x0 + c * cmPx, y: y0 + fontSize * 1.4,
+                    'text-anchor': 'middle', 'dominant-baseline': 'middle',
+                    'font-size': fontSize, 'font-family': 'Arial',
+                    fill: 'rgba(0,40,140,0.88)'
+                });
+                t.textContent = c + '';
+                g.appendChild(t);
+            }
+            for (let r = 5; r <= rows; r += 5) {
+                const t = _svgEl('text', {
+                    x: x0 + cmPx * 1.9, y: y0 + r * cmPx,
+                    'text-anchor': 'end', 'dominant-baseline': 'middle',
+                    'font-size': fontSize, 'font-family': 'Arial',
+                    fill: 'rgba(0,40,140,0.88)'
+                });
+                t.textContent = r + '';
+                g.appendChild(t);
+            }
+
+            // ── 外框 ──
+            g.appendChild(_svgEl('rect', {
+                x: x0, y: y0, width: w, height: h,
+                fill: 'none', stroke: 'rgba(0,60,180,0.82)', 'stroke-width': 1.6
+            }));
+
+            // ── 吸附指示：左上角紅圈 ──
+            if (rulerState.snapToProtractor) {
+                g.appendChild(_svgEl('circle', {
+                    cx: x0, cy: y0, r: cmPx * 0.45,
+                    fill: 'none', stroke: 'rgba(220,40,0,0.95)', 'stroke-width': 2
+                }));
+            }
+
+            rulerCanvas.appendChild(g);
+
+            // ── 控制點（在主群組外單獨繪製，保持圓形不被 transform 扭曲） ──
+            _drawRulerHandlesSVG(x0, y0, w, h, cmPx, cx, cy, angle);
+        }
+
+        function _drawRulerHandlesSVG(x0, y0, w, h, cmPx, cx, cy, angle) {
+            const handles = _rulerHandles(x0, y0, w, h, cmPx);
+            const cosA = Math.cos(angle), sinA = Math.sin(angle);
+            handles.forEach(function(hd) {
+                // 將局部座標轉為世界座標
+                const wx = cx + hd.x * cosA - hd.y * sinA;
+                const wy = cy + hd.x * sinA + hd.y * cosA;
+                const c = _svgEl('circle', {
+                    cx: wx, cy: wy, r: hd.r,
+                    fill: hd.color, stroke: 'rgba(255,255,255,0.9)', 'stroke-width': 1.5
+                });
+                rulerCanvas.appendChild(c);
+            });
+        }
+
+        function _drawRulerHandles() {} // 舊 canvas 版本，SVG 不使用
+
+        // 控制點定義（局部座標）
+        // rotate 把手在右上角正上方，旋轉中心仍為左上角
+        // 無中心移動點（拖動直尺本體即可移動）
+        function _rulerHandles(x0, y0, w, h, cmPx) {
+            const r1 = Math.max(5, cmPx * 0.28);
+            const r2 = Math.max(6, cmPx * 0.32);
+            return [
+                { type: 'rotate',    x: x0 + w,     y: y0 - cmPx * 1.2, r: r2, color: 'rgba(220,100,30,0.88)' },
+                { type: 'resize-tl', x: x0,         y: y0,             r: r1, color: 'rgba(60,180,60,0.88)' },
+                { type: 'resize-tr', x: x0 + w,     y: y0,             r: r1, color: 'rgba(60,180,60,0.88)' },
+                { type: 'resize-bl', x: x0,         y: y0 + h,         r: r1, color: 'rgba(60,180,60,0.88)' },
+                { type: 'resize-br', x: x0 + w,     y: y0 + h,         r: r1, color: 'rgba(60,180,60,0.88)' },
+            ];
+        }
+
+        // ── 座標轉換 ─────────────────────────────────────────────────
+        function _screenToRulerLocal(sx, sy) {
+            const { cx, cy, angle } = rulerState;
+            const dx = sx - cx, dy = sy - cy;
+            const cos = Math.cos(-angle), sin = Math.sin(-angle);
+            return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
+        }
+
+        function _rulerHitTest(sx, sy) {
+            const cmPx = rulerCmPx();
+            const w = rulerState.wCm * cmPx, h = rulerState.hCm * cmPx;
+            const x0 = -w / 2, y0 = -h / 2;
+            const handles = _rulerHandles(x0, y0, w, h, cmPx);
+            const lp = _screenToRulerLocal(sx, sy);
+            for (var i = 0; i < handles.length; i++) {
+                var hd = handles[i];
+                var dx = lp.x - hd.x, dy = lp.y - hd.y;
+                if (dx * dx + dy * dy <= hd.r * hd.r * 3.2) return hd.type;
+            }
+            if (lp.x >= x0 && lp.x <= x0 + w && lp.y >= y0 && lp.y <= y0 + h) return 'body';
+            return null;
+        }
+
+        // 直尺左上角的 canvas 世界座標
+        function _rulerTLWorld() {
+            const { cx, cy, wCm, hCm, angle } = rulerState;
+            const cmPx = rulerCmPx();
+            const w = wCm * cmPx, h = hCm * cmPx;
+            const cos = Math.cos(angle), sin = Math.sin(angle);
+            const lx = -w / 2, ly = -h / 2;
+            return { x: cx + lx * cos - ly * sin, y: cy + lx * sin + ly * cos };
+        }
+
+        // ── 量角器吸附 ───────────────────────────────────────────────
+        function _protractorCenterInCanvas() {
+            if (!protractorVisible || !rulerCanvas) return null;
+            const pRect = protractorTool.getBoundingClientRect();
+            const clientX = pRect.left + pRect.width  / 2;
+            const clientY = pRect.top  + pRect.height / 2;
+            return _rulerClientToCanvas(clientX, clientY);
+        }
+
+        function _snapRulerToProtractor() {
+            const pc = _protractorCenterInCanvas();
+            if (!pc) return;
+            const { wCm, hCm, angle } = rulerState;
+            const cmPx = rulerCmPx();
+            const w = wCm * cmPx, h = hCm * cmPx;
+            const cos = Math.cos(angle), sin = Math.sin(angle);
+            // 讓左上角 (-w/2, -h/2) 對齊量角器中心
+            rulerState.cx = pc.x + (w / 2) * cos - (h / 2) * sin;
+            rulerState.cy = pc.y + (w / 2) * sin + (h / 2) * cos;
+        }
+
+        // 量角器移動後呼叫，帶動吸附的直尺
+        function _onProtractorMoved() {
+            if (!isRulerMode || !rulerState.snapToProtractor) return;
+            _snapRulerToProtractor();
+            drawRuler();
+        }
+
+        // ── 事件 ─────────────────────────────────────────────────────
+        function bindRulerEvents() {
+            if (!rulerCanvas) return;
+            rulerCanvas.addEventListener('mousedown', _rulerMouseDown);
+            rulerCanvas.addEventListener('touchstart', _rulerTouchStart, { passive: false });
+            document.addEventListener('mousemove', _rulerMouseMove);
+            document.addEventListener('mouseup',   _rulerMouseUp);
+            document.addEventListener('touchmove',  _rulerTouchMove, { passive: false });
+            document.addEventListener('touchend',   _rulerTouchEnd);
+        }
+
+        function unbindRulerEvents() {
+            if (!rulerCanvas) return;
+            rulerCanvas.removeEventListener('mousedown', _rulerMouseDown);
+            rulerCanvas.removeEventListener('touchstart', _rulerTouchStart);
+            document.removeEventListener('mousemove', _rulerMouseMove);
+            document.removeEventListener('mouseup',   _rulerMouseUp);
+            document.removeEventListener('touchmove',  _rulerTouchMove);
+            document.removeEventListener('touchend',   _rulerTouchEnd);
+        }
+
+        function _rulerClientToCanvas(clientX, clientY) {
+            if (!rulerCanvas) return { x: clientX, y: clientY };
+            const rect = rulerCanvas.getBoundingClientRect();
+            // SVG 用 _w/_h 儲存邏輯尺寸；canvas 用 .width/.height
+            const logW = rulerCanvas._w || rulerCanvas.width  || rect.width;
+            const logH = rulerCanvas._h || rulerCanvas.height || rect.height;
+            const scaleX = logW / rect.width;
+            const scaleY = logH / rect.height;
+            return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+        }
+
+        function _rulerMouseDown(e) {
+            const p = _rulerClientToCanvas(e.clientX, e.clientY);
+            const hit = _rulerHitTest(p.x, p.y);
+            if (!hit) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (hit === 'body' || hit === 'move') rulerState.snapToProtractor = false;
+            _startRulerDrag(hit, p.x, p.y);
+        }
+
+        function _rulerTouchStart(e) {
+            if (e.touches.length !== 1) return;
+            const t = e.touches[0];
+            const p = _rulerClientToCanvas(t.clientX, t.clientY);
+            const hit = _rulerHitTest(p.x, p.y);
+            if (!hit) return;
+            e.preventDefault();
+            if (hit === 'body' || hit === 'move') rulerState.snapToProtractor = false;
+            _startRulerDrag(hit, p.x, p.y);
+        }
+
+        function _startRulerDrag(type, px, py) {
+            const { cx, cy, wCm, hCm, angle } = rulerState;
+            const cmPx = rulerCmPx();
+            const w = wCm * cmPx, h = hCm * cmPx;
+            // 記錄對角的世界座標（縮放時固定對角）
+            var fixedWorld = null;
+            if (type.startsWith('resize-')) {
+                var opposite = { 'resize-tl': [w/2, h/2], 'resize-tr': [-w/2, h/2],
+                                 'resize-bl': [w/2, -h/2], 'resize-br': [-w/2, -h/2] };
+                var oLocal = opposite[type];
+                var cosA = Math.cos(angle), sinA = Math.sin(angle);
+                fixedWorld = {
+                    x: cx + oLocal[0] * cosA - oLocal[1] * sinA,
+                    y: cy + oLocal[0] * sinA + oLocal[1] * cosA
+                };
+            }
+            // 記錄旋轉起始時左上角世界座標（旋轉時固定左上角）
+            const startTL = _rulerTLWorld();
+            rulerDrag = {
+                type: type,
+                startPx: px, startPy: py,
+                startCx: cx, startCy: cy,
+                startW: w,   startH: h,
+                startWCm: wCm, startHCm: hCm,
+                startAngle: angle,
+                startVecAngle: Math.atan2(py - cy, px - cx),
+                fixedWorld: fixedWorld,
+                startTL: startTL
+            };
+        }
+
+        function _rulerMouseMove(e) {
+            if (!rulerDrag) return;
+            e.preventDefault();
+            const p = _rulerClientToCanvas(e.clientX, e.clientY);
+            _applyRulerDrag(p.x, p.y, e.shiftKey);
+        }
+
+        function _rulerTouchMove(e) {
+            if (!rulerDrag || e.touches.length !== 1) return;
+            e.preventDefault();
+            const t = e.touches[0];
+            const p = _rulerClientToCanvas(t.clientX, t.clientY);
+            _applyRulerDrag(p.x, p.y, false);
+        }
+
+        function _applyRulerDrag(px, py, shiftKey) {
+            if (!rulerDrag) return;
+            const d = rulerDrag;
+            const cmPx = rulerCmPx();
+            const minSize = cmPx * 2;
+
+            if (d.type === 'body' || d.type === 'move') {
+                rulerState.cx = d.startCx + (px - d.startPx);
+                rulerState.cy = d.startCy + (py - d.startPy);
+                // 磁吸：若左上角接近量角器中心，自動吸附
+                const pc = _protractorCenterInCanvas();
+                if (pc) {
+                    const tl = _rulerTLWorld();
+                    const dist = Math.sqrt((tl.x - pc.x) * (tl.x - pc.x) + (tl.y - pc.y) * (tl.y - pc.y));
+                    const snapThreshold = cmPx * 1.5;
+                    if (dist < snapThreshold) {
+                        rulerState.snapToProtractor = true;
+                        _snapRulerToProtractor();
+                    } else {
+                        rulerState.snapToProtractor = false;
+                    }
+                }
+
+            } else if (d.type === 'rotate') {
+                // 以左上角為旋轉中心（使用拖動起始時記錄的固定左上角座標）
+                const tl = d.startTL;
+                const curAngle = Math.atan2(py - tl.y, px - tl.x);
+                const initAngle = Math.atan2(d.startPy - tl.y, d.startPx - tl.x);
+                var delta = curAngle - initAngle;
+                if (shiftKey) {
+                    delta = Math.round(delta / (Math.PI / 180)) * (Math.PI / 180);
+                } else {
+                    delta = Math.round(delta / (5 * Math.PI / 180)) * (5 * Math.PI / 180);
+                }
+                const newAngle = d.startAngle + delta;
+                // 旋轉後讓左上角保持在原位
+                const cosA = Math.cos(newAngle), sinA = Math.sin(newAngle);
+                const lx = -d.startW / 2, ly = -d.startH / 2;
+                rulerState.angle = newAngle;
+                rulerState.cx = tl.x - (lx * cosA - ly * sinA);
+                rulerState.cy = tl.y - (lx * sinA + ly * cosA);
+
+            } else if (d.type.startsWith('resize-')) {
+                // 固定對角，從對角到滑鼠位置計算新尺寸（以 cm 單位儲存）
+                const fw = d.fixedWorld;
+                const angle = d.startAngle;
+                const cosI = Math.cos(-angle), sinI = Math.sin(-angle);
+                const ddx = px - fw.x, ddy = py - fw.y;
+                const mlx = ddx * cosI - ddy * sinI;
+                const mly = ddx * sinI + ddy * cosI;
+
+                // 縮放方向符號（拖動角相對固定角的方向）
+                const signX = d.type.includes('r') ? 1 : -1;
+                const signY = d.type.includes('b') ? 1 : -1;
+
+                const newW = Math.max(minSize, mlx * signX);
+                const newH = Math.max(minSize, mly * signY);
+
+                // 新中心 = 固定點 + 從固定點到中心的向量
+                const halfW = newW / 2, halfH = newH / 2;
+                const toMidLx = signX * halfW;
+                const toMidLy = signY * halfH;
+                const cosA = Math.cos(angle), sinA = Math.sin(angle);
+                // 轉換回 cm 單位儲存
+                rulerState.wCm = newW / rulerCmPx();
+                rulerState.hCm = newH / rulerCmPx();
+                rulerState.cx = fw.x + toMidLx * cosA - toMidLy * sinA;
+                rulerState.cy = fw.y + toMidLx * sinA + toMidLy * cosA;
+            }
+            drawRuler();
+        }
+
+        function _rulerMouseUp()  { rulerDrag = null; }
+        function _rulerTouchEnd() { rulerDrag = null; }
+
+        // ── 開關 ─────────────────────────────────────────────────────
+        function toggleRuler() {
+            isRulerMode = !isRulerMode;
+            const btn = document.getElementById('ruler-toggle');
+            if (btn) btn.classList.toggle('active', isRulerMode);
+            if (isRulerMode) {
+                initRulerCanvas();
+                isDraggingMap = false;
+                // 若量角器已顯示，自動吸附
+                if (protractorVisible) {
+                    rulerState.snapToProtractor = true;
+                    _snapRulerToProtractor();
+                    drawRuler();
+                }
+            } else {
+                unbindRulerEvents();
+                destroyRulerCanvas();
+            }
+            _updateRotationPanel();
+        }
+
+        function redrawRulerIfActive() {
+            if (!isRulerMode || !rulerCanvas) return;
+            const mc = document.getElementById('map-canvas');
+            if (mc) {
+                const W = mc.width, H = mc.height;
+                // SVG 用 setAttribute；canvas 用屬性賦值
+                if (rulerCanvas.tagName === 'svg' || rulerCanvas.tagName === 'SVG') {
+                    if (rulerCanvas._w !== W || rulerCanvas._h !== H) {
+                        rulerCanvas.setAttribute('width',  W);
+                        rulerCanvas.setAttribute('height', H);
+                        rulerCanvas._w = W;
+                        rulerCanvas._h = H;
+                    }
+                } else {
+                    if (rulerCanvas.width !== W || rulerCanvas.height !== H) {
+                        rulerCanvas.width  = W;
+                        rulerCanvas.height = H;
+                    }
+                }
+            }
+            rulerCanvas.style.transform = 'matrix(' + currentScale + ',0,0,' + currentScale + ',' + mapOffset.x + ',' + mapOffset.y + ')';
+            drawRuler();
+        }
+
+        // ── 旋轉面板控制 ─────────────────────────────────────────────
+        function _updateRotationPanel() {
+            const panel = document.getElementById('rotation-panel');
+            const pGroup = document.getElementById('protractor-rotate-group');
+            const rGroup = document.getElementById('ruler-rotate-group');
+            if (!panel) return;
+            const showPanel = protractorVisible || isRulerMode;
+            panel.style.display = showPanel ? 'flex' : 'none';
+            if (pGroup) pGroup.style.display = protractorVisible ? 'flex' : 'none';
+            if (rGroup) rGroup.style.display = isRulerMode        ? 'flex' : 'none';
+        }
+
+        function _rotateProtractor(deltaDeg) {
+            protractorAngle = (protractorAngle + deltaDeg) % 360;
+            protractorTool.style.transform = `rotate(${protractorAngle}deg)`;
+            drawProtractor(); // 重繪讓標籤保持正向
+            // 若直尺已吸附量角器，同步移動
+            if (isRulerMode && rulerState.snapToProtractor) {
+                _snapRulerToProtractor();
+                drawRuler();
+            }
+        }
+
+        function _rotateRulerByDeg(deltaDeg) {
+            if (!isRulerMode) return;
+            const deltaRad = deltaDeg * (Math.PI / 180);
+            const tl = _rulerTLWorld();
+            const newAngle = rulerState.angle + deltaRad;
+            const cosA = Math.cos(newAngle), sinA = Math.sin(newAngle);
+            const cmPx = rulerCmPx();
+            const lx = -rulerState.wCm * cmPx / 2, ly = -rulerState.hCm * cmPx / 2;
+            rulerState.angle = newAngle;
+            rulerState.cx = tl.x - (lx * cosA - ly * sinA);
+            rulerState.cy = tl.y - (lx * sinA + ly * cosA);
+            drawRuler();
+        }
+
+        // 綁定旋轉按鈕
+        document.getElementById('protractor-rotate-ccw').addEventListener('click', () => _rotateProtractor(-90));
+        document.getElementById('protractor-rotate-cw' ).addEventListener('click', () => _rotateProtractor( 90));
+        document.getElementById('ruler-rotate-ccw'     ).addEventListener('click', () => _rotateRulerByDeg(-1));
+        document.getElementById('ruler-rotate-cw'      ).addEventListener('click', () => _rotateRulerByDeg( 1));
+
+        // ═══════════════════════════════════════════════════════════════
+
         // 水流系統（流線型尾跡，直接貼地面，無下雨效果）
         // ═══════════════════════════════════════════════════════════════
 
